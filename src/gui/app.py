@@ -696,16 +696,18 @@ class App(ctk.CTk):
                         if mensagem:
                             self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
                     elif etapa == 'processar_log':
-                        # Logs do processador (SiproquimProcessor)
+                        # Logs do processador (validação robusta: CRITICO, ERRO, ALERTA, VALIDACAO, etc.)
                         mensagem = detalhes.get('mensagem', '')
                         tipo = detalhes.get('tipo', 'INFO')
                         if mensagem:
-                            if tipo == 'ERRO':
+                            if tipo in ('ERRO', 'CRITICO'):
                                 self.after(0, lambda: self._log_manager.adicionar_erro(mensagem))
                             elif tipo == 'SUCESSO':
                                 self.after(0, lambda: self._log_manager.adicionar_sucesso(mensagem))
-                            elif tipo == 'ATENCAO' or tipo == 'ACAO' or tipo == 'ACAO_NECESSARIA':
+                            elif tipo in ('ATENCAO', 'ACAO', 'ACAO_NECESSARIA', 'ALERTA'):
                                 self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
+                            elif tipo == 'VALIDACAO':
+                                self.after(0, lambda: self._log_manager.adicionar_info(mensagem))
                             else:  # INFO ou padrão
                                 self.after(0, lambda: self._log_manager.adicionar_info(mensagem))
                     elif etapa == 'finalizar':

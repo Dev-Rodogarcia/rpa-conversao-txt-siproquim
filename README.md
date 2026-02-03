@@ -1,4 +1,4 @@
-# SIPROQUIM Converter V5
+# SIPROQUIM Converter V6
 
 Conversor de PDF para TXT no formato SIPROQUIM/Rodogarcia para a Polícia Federal. Extrai dados de Notas Fiscais e CTes de arquivos PDF e gera arquivos TXT formatados conforme o layout exigido pelo sistema SIPROQUIM.
 
@@ -10,6 +10,7 @@ Este projeto foi desenvolvido para automatizar a conversão de documentos PDF co
 
 - **Extração Automática**: Processa PDFs com centenas de páginas, extraindo dados de emitentes, destinatários, contratantes, NFs e CTes
 - **Deduplicação Inteligente**: Remove duplicatas automaticamente por número de NF
+- **Validação Robusta (V6)**: Validação preventiva antes de gerar o TXT: checksum (Módulo 11) em CNPJs/CPFs, formato de NF/CTe/datas, estrutura do PDF (detecta mudança de layout da PF)
 - **Validação de CNPJ/CPF**: Validação rigorosa usando algoritmo oficial (Módulo 11), com suporte para CPFs convertidos e detecção de pessoa física
 - **Interface Gráfica Moderna**: Interface intuitiva construída com CustomTkinter, com logs em tempo real e barra de progresso
 - **Seleção de Filiais**: Sistema de busca e seleção de filiais por CNPJ ou dropdown
@@ -145,6 +146,32 @@ O arquivo TXT gerado segue o layout SIPROQUIM com três tipos de linhas:
 - Responsável Recebimento: 70 chars
 - Modal: "RO" (2 chars)
 
+## Validação Robusta e Logs (V6)
+
+O sistema valida todos os campos **antes** de gerar o TXT e exibe logs detalhados na GUI e no terminal.
+
+### O que é validado
+
+- **Estrutura do PDF**: Presença dos labels obrigatórios (EMITENTE, DESTINATÁRIO, CONTRATANTE, CT-E, CNPJ/CPF). Se o layout da PF mudar, o script interrompe e registra o erro.
+- **NF**: Número (4–6 dígitos), data (dd/mm/aaaa e data existente no calendário).
+- **CTe**: Número (1–9 dígitos), data (formato e calendário).
+- **CNPJs/CPFs**: Tamanho (11 ou 14 dígitos) e checksum (Módulo 11).
+- **Nomes e recebedor**: Tamanho mínimo e campos obrigatórios.
+
+### Tipos de log exibidos
+
+| Tipo | Cor (GUI) | Significado |
+|------|-----------|-------------|
+| **INFO** | Azul | Andamento, totais, relatório final |
+| **VALIDACAO** | Azul | Quantidade de erros por NF |
+| **CRITICO** | Vermelho | Campo obrigatório inválido; SIPROQUIM tende a rejeitar |
+| **ERRO** | Vermelho | Formato/tamanho inválido (ex.: data, nome curto) |
+| **ATENCAO** / **ACAO_NECESSARIA** | Amarelo | CPF no lugar de CNPJ, nome vazio, CNPJ emitente inválido; ação manual sugerida |
+| **ALERTA** | Amarelo | Resumo de registros com erros críticos |
+| **SUCESSO** | Verde | Auto-correção aplicada (ex.: nome preenchido pela base) |
+
+Nenhum registro é removido: todos seguem para o TXT; os problemas são apenas sinalizados nos logs para correção manual quando necessário.
+
 ## Validação de CNPJ/CPF
 
 O sistema implementa validação inteligente de CNPJs:
@@ -200,6 +227,13 @@ Mesmo com o mesmo CNPJ, mês e ano, PDFs diferentes geram arquivos diferentes, e
 - Tente executar via linha de comando para ver erros detalhados
 
 ## Changelog
+
+### Versão 6.0
+- Validação robusta antes de gerar o TXT (checksum, formato, integridade)
+- Validação de estrutura do PDF (detecta mudança de layout da PF)
+- Validação de NF/CTe (número e data) e de todos os CNPJs/CPFs (Módulo 11)
+- Logs estruturados: INFO, VALIDACAO, CRITICO, ERRO, ATENCAO, ACAO_NECESSARIA, ALERTA, SUCESSO
+- Relatório final com totais de registros processados, corrigidos e com erros
 
 ### Versão 5.0
 - Validação inteligente de CNPJ para pessoa física

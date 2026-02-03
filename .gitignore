@@ -72,10 +72,9 @@ backups/
 *.temp
 .cache/
 
-# Arquivos de teste
-test_*.py
-*_test.py
+# Scripts de teste/debug (mantém test_validacao_robusta.py versionado)
 debug_*.py
 verificar_*.py
 analisar_*.py
 comparar_*.py
+!test_validacao_robusta.py

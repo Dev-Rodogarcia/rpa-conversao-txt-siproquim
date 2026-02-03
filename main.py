@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from src.extrator import ExtratorPDF
-from src.processador import SiproquimProcessor
+from src.processador import SiproquimProcessor, ProcessadorValidacaoIntegrada
 from src.gerador import GeradorTXT
 
 
@@ -98,8 +98,9 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     finally:
         extrator.fechar_pdf()
     
-    # CAMADA DE PROCESSAMENTO HÍBRIDA: Corrige automaticamente o que pode, mantém tudo no arquivo
-    # Estratégia: Auto-correção + Delegação (NENHUM registro é removido)
+    # CAMADA DE PROCESSAMENTO ROBUSTA: Validação completa com checksum/integridade
+    # Estratégia: Validação Preventiva + Auto-correção + Delegação (NENHUM registro é removido)
+    # NOVO: Valida TODOS os campos (NF, CTe, CNPJs, Datas) ANTES de gerar TXT
     if callback_progresso:
         callback_progresso('processar', {'total_registros': len(nfs_deduplicadas)})
     
@@ -123,20 +124,26 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
             # Fallback para CLI
             print(mensagem)
     
-    # Instancia a classe inteligente (usa wrapper que integra com GUI)
-    processador = SiproquimProcessor(callback_log=log_wrapper)
+    # NOVO: Usa processador com validação integrada robusta
+    # Valida checksum, formato e integridade de TODOS os campos
+    processador = ProcessadorValidacaoIntegrada(callback_log=log_wrapper)
     
-    # Processa, Corrige e Enriquece os dados (mantém TODOS os registros no arquivo)
-    # Avisos aparecem no log automaticamente para correção manual quando necessário
+    # Processa com VALIDAÇÃO ROBUSTA: Checksum + Formato + Integridade
+    # 1. Valida TODOS os campos (NF, CTe, CNPJs, Datas)
+    # 2. Corrige automaticamente usando base de conhecimento
+    # 3. Mantém TODOS os registros no arquivo
+    # 4. Avisos aparecem no log para correção manual quando necessário
     nfs_validas = processador.filtrar_dados_validos(nfs_deduplicadas)
     
-    # Estatísticas para callback (se necessário)
+    # Estatísticas para callback (com informações de validação)
     stats = processador.obter_estatisticas()
     if callback_progresso:
         callback_progresso('processar', {
             'total_rejeitados': stats['total_rejeitados'],  # Sempre 0 na estratégia híbrida
             'total_corrigidos': stats['total_corrigidos'],
-            'total_aprovados': len(nfs_validas)
+            'total_aprovados': len(nfs_validas),
+            'total_com_erros': stats.get('total_com_erros', 0),
+            'total_com_erros_criticos': stats.get('total_com_erros_criticos', 0),
         })
     
     # Extrai mês e ano (usa valores fornecidos ou extrai do PDF)
