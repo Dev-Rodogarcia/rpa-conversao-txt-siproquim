@@ -12,11 +12,9 @@ class UIConstants:
     # ============================================================================
     # CONFIGURAÇÕES DA JANELA
     # ============================================================================
-    WINDOW_TITLE = "SIPROQUIM Converter V2 by valentelucass"
+    WINDOW_TITLE = "SIPROQUIM Converter V3 by valentelucass"
     WINDOW_SIZE = "1250x750"
-    WINDOW_RESIZABLE = True
-    WINDOW_MIN_WIDTH = 1000
-    WINDOW_MIN_HEIGHT = 650
+    WINDOW_RESIZABLE = False
     
     # ============================================================================
     # CORES
@@ -31,13 +29,9 @@ class UIConstants:
     # Cores de logs
     COLOR_LOG_ERROR = "#FF6B6B"  # Vermelho
     COLOR_LOG_SUCCESS = "#51CF66"  # Verde
-    COLOR_LOG_INFO = "#E5E7EB"  # Branco suave
+    COLOR_LOG_INFO = "#4DABF7"  # Azul
     COLOR_LOG_DEBUG = "#A78BFA"  # Roxo
     COLOR_LOG_WARNING = "#FFD43B"  # Amarelo
-    COLOR_LOG_SYSTEM = "#60A5FA"  # Azul
-    COLOR_LOG_STATUS = "#22D3EE"  # Ciano
-    COLOR_LOG_ACTION = "#A3E635"  # Verde lima
-    COLOR_LOG_NF = "#FFFFFF"  # Branco
     
     # Cores de texto
     COLOR_TEXT_PRIMARY = ("gray10", "gray90")
@@ -61,12 +55,6 @@ class UIConstants:
     FONT_SIZE_SMALL = 11
     FONT_SIZE_TINY = 10
     FONT_SIZE_BUTTON = 15
-    
-    # Fontes de log (ajustáveis pela UI)
-    LOG_FONT_SIZE_DEFAULT = 10
-    LOG_FONT_SIZE_MIN = 8
-    LOG_FONT_SIZE_MAX = 16
-    LOG_FONT_SIZE_STEP = 1
     
     # Alturas de componentes
     HEIGHT_ENTRY = 35
@@ -121,7 +109,6 @@ class UIConstants:
     
     # Títulos de seções
     TEXT_LOGS_TITLE = "📋 Logs de Processamento"
-    TEXT_LOGS_LEGEND = "SYSTEM=Processo | CONFIG=Configuracao | STATUS=Etapa | PROGRESSO=Andamento | RELATORIO=Resumo final | CHECK=Indicadores | AVISO=Revisao manual | ERRO=Falha | EXPORT=Arquivo"
     TEXT_STATUS_DEFAULT = "Aguardando ação do usuário..."
     TEXT_STATUS_INICIANDO = "Iniciando processamento..."
     TEXT_STATUS_ABRINDO_PDF = "Abrindo arquivo PDF..."
@@ -181,18 +168,7 @@ class UIConstants:
         "SUCESSO": COLOR_LOG_SUCCESS,
         "INFO": COLOR_LOG_INFO,
         "DEBUG": COLOR_LOG_DEBUG,
-        "AVISO": COLOR_LOG_WARNING,
-        "ALERTA": COLOR_LOG_WARNING,
-        "ATENCAO": COLOR_LOG_WARNING,
-        "ACAO_NECESSARIA": COLOR_LOG_WARNING,
-        "VALIDACAO": COLOR_LOG_INFO,
-        "SYSTEM": COLOR_LOG_SYSTEM,
-        "CONFIG": COLOR_LOG_SYSTEM,
-        "STATUS": COLOR_LOG_STATUS,
-        "PROGRESSO": COLOR_LOG_STATUS,
-        "RELATORIO": COLOR_LOG_SYSTEM,
-        "CHECK": COLOR_LOG_SUCCESS,
-        "EXPORT": COLOR_LOG_SUCCESS
+        "AVISO": COLOR_LOG_WARNING
     }
     
     # ============================================================================

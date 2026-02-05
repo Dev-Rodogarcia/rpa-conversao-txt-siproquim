@@ -1,3 +1,16 @@
+<!-- PORTFOLIO-FEATURED
+title: SIPROQUIM Converter V6 (PDF -> TXT)
+description: Conversor de PDF para TXT no layout SIPROQUIM/Rodogarcia para a Policia Federal. Extrai NFs e CTes, deduplica e valida formatos/checksums com detecao de mudanca de layout.
+technologies: Python 3.8+, pdfplumber, CustomTkinter, PyInstaller, Pillow
+demo: N/A (Desktop GUI + CLI)
+highlight: true
+image: public/foto1.png
+-->
+
+<p align="center">
+  <img src="public/foto.png" alt="Capa do projeto" width="1200">
+</p>
+
 # SIPROQUIM Converter V6
 
 Conversor de PDF para TXT no formato SIPROQUIM/Rodogarcia para a Polícia Federal. Extrai dados de Notas Fiscais e CTes de arquivos PDF e gera arquivos TXT formatados conforme o layout exigido pelo sistema SIPROQUIM.
