@@ -31,6 +31,7 @@ class ProcessadorValidacaoIntegrada:
     
     def __init__(self, 
                  callback_log: Optional[Callable[[str], None]] = None,
+                 callback_event: Optional[Callable[[str, Dict], None]] = None,
                  validar_estrutura_pdf: bool = ConfigValidacao.VALIDAR_ESTRUTURA_PDF,
                  fail_fast: bool = ConfigValidacao.FAIL_FAST):
         """
@@ -40,6 +41,7 @@ class ProcessadorValidacaoIntegrada:
             fail_fast: Se True, para no primeiro erro crítico
         """
         self.log = callback_log
+        self.callback_event = callback_event
         self.validar_estrutura_pdf_flag = validar_estrutura_pdf
         self.fail_fast = fail_fast
         
@@ -52,6 +54,7 @@ class ProcessadorValidacaoIntegrada:
         self.registros_com_erros_count = 0
         self.registros_com_erros_criticos_count = 0
         self.total_erros_encontrados = 0
+        self.ajustes_manuais_count = 0
         
         # Cache de erros por NF
         self.erros_por_nf: Dict[str, List[ErroValidacao]] = {}
@@ -63,6 +66,15 @@ class ProcessadorValidacaoIntegrada:
             self.log(msg_formatada)
         else:
             print(msg_formatada)
+
+    def _emitir_ajuste(self, nf_num: str, tipo: str, mensagem: str):
+        """Emite evento estruturado de ajuste manual para a GUI."""
+        if self.callback_event:
+            self.callback_event('ajuste_manual', {
+                'nf': nf_num,
+                'tipo': tipo,
+                'mensagem': mensagem
+            })
     
     def validar_estrutura_pdf(self, texto_pagina: str) -> bool:
         """
@@ -109,6 +121,7 @@ class ProcessadorValidacaoIntegrada:
         self.registros_com_erros_criticos_count = 0
         self.total_erros_encontrados = 0
         self.erros_por_nf = {}
+        self.ajustes_manuais_count = 0
         
         self._log_gui("INFO", f"Processando {len(nfs_extraidas)} registros com VALIDAÇÃO ROBUSTA...")
         self._log_gui("INFO", "Sistema de Validação: CHECKSUM + FORMATO + INTEGRIDADE")
@@ -193,6 +206,9 @@ class ProcessadorValidacaoIntegrada:
         """
         nf_num = nf.get('nf_numero', 'N/A')
         
+        def registrar_ajuste():
+            self.ajustes_manuais_count += 1
+        
         # --- VERIFICAÇÃO 1: CPF NO LUGAR DE CNPJ (Caso Leonardo/Thalita) ---
         for chave, tipo_pessoa in [('contratante_cnpj', 'Contratante'), 
                                     ('destinatario_cnpj', 'Destinatário')]:
@@ -200,6 +216,9 @@ class ProcessadorValidacaoIntegrada:
             doc = ''.join(filter(str.isdigit, doc_raw))
             
             if len(doc) == 11 and validar_cpf(doc):
+                registrar_ajuste()
+                self._emitir_ajuste(nf_num, "ACAO_NECESSARIA",
+                                    f"{tipo_pessoa} é CPF ({doc}) ao invés de CNPJ.")
                 self._log_gui("ACAO_NECESSARIA", 
                               f"NF {nf_num}: {tipo_pessoa} e CPF ({doc}) ao inves de CNPJ.")
                 self._log_gui("ACAO_NECESSARIA", 
@@ -219,6 +238,9 @@ class ProcessadorValidacaoIntegrada:
             cnpj = ''.join(filter(str.isdigit, cnpj_raw))
             
             if cnpj and (not nome or len(nome) < 2):
+                registrar_ajuste()
+                self._emitir_ajuste(nf_num, "ATENCAO",
+                                    f"CNPJ {cnpj} ({tipo_pessoa}) está sem nome.")
                 self._log_gui("ATENCAO", 
                               f"NF {nf_num}: CNPJ {cnpj} ({tipo_pessoa}) esta SEM NOME "
                               f"(nao encontrado na base de conhecimento).")
@@ -231,11 +253,25 @@ class ProcessadorValidacaoIntegrada:
         cnpj_emitente = ''.join(filter(str.isdigit, cnpj_emitente_raw))
         
         if cnpj_emitente:
-            if len(cnpj_emitente) != 14:
+            if len(cnpj_emitente) == 11 and validar_cpf(cnpj_emitente):
+                registrar_ajuste()
+                self._emitir_ajuste(nf_num, "ACAO_NECESSARIA",
+                                    f"Emitente está como CPF ({cnpj_emitente}) no lugar de CNPJ.")
+                self._log_gui("ACAO_NECESSARIA", 
+                              f"NF {nf_num}: Emitente é CPF ({cnpj_emitente}) no lugar de CNPJ.")
+                self._log_gui("ACAO_NECESSARIA", 
+                              f"   -> O registro foi mantido no TXT. Substitua por um CNPJ válido.")
+            elif len(cnpj_emitente) != 14:
+                registrar_ajuste()
+                self._emitir_ajuste(nf_num, "ACAO_NECESSARIA",
+                                    f"CNPJ Emitente com tamanho inválido ({len(cnpj_emitente)} dígitos).")
                 self._log_gui("ACAO_NECESSARIA", 
                               f"NF {nf_num}: CNPJ Emitente tem tamanho incorreto "
                               f"({len(cnpj_emitente)} digitos: {cnpj_emitente}).")
             elif not validar_cnpj(cnpj_emitente):
+                registrar_ajuste()
+                self._emitir_ajuste(nf_num, "ACAO_NECESSARIA",
+                                    f"CNPJ Emitente inválido ({cnpj_emitente}).")
                 self._log_gui("ACAO_NECESSARIA", 
                               f"NF {nf_num}: CNPJ Emitente invalido ({cnpj_emitente}) "
                               f"- nao passa na validacao Modulo 11.")
@@ -250,6 +286,7 @@ class ProcessadorValidacaoIntegrada:
         self._log_gui("INFO", f"Registros com erros de validação: {self.registros_com_erros_count}")
         self._log_gui("INFO", f"Registros com erros CRÍTICOS: {self.registros_com_erros_criticos_count}")
         self._log_gui("INFO", f"Total de erros encontrados: {self.total_erros_encontrados}")
+        self._log_gui("INFO", f"Ajustes manuais necessários: {self.ajustes_manuais_count}")
         self._log_gui("INFO", f"Total exportado para TXT: {total_processados}")
         self._log_gui("INFO", "=" * 60)
         
@@ -274,6 +311,7 @@ class ProcessadorValidacaoIntegrada:
             'total_com_erros': self.registros_com_erros_count,
             'total_com_erros_criticos': self.registros_com_erros_criticos_count,
             'total_erros_encontrados': self.total_erros_encontrados,
+            'total_ajustes_manuais': self.ajustes_manuais_count,
             'tem_rejeicoes': False,  # Não remove nada na estratégia híbrida
             'tem_correcoes': self.registros_corrigidos_count > 0,
             'tem_erros': self.registros_com_erros_count > 0,

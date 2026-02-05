@@ -243,9 +243,16 @@ class ValidadorCampos:
     def _validar_todos_cnpjs(self, registro: Dict) -> List[ErroValidacao]:
         """Valida todos os CNPJs/CPFs do registro."""
         erros = []
+
+        # Emitente deve ser CNPJ (14 dígitos) - CPF não é aceito neste campo
+        erro_emitente = self._validar_cnpj_emitente(registro.get('emitente_cnpj', ''))
+        if erro_emitente:
+            erros.append(erro_emitente)
+            if self.fail_fast:
+                return erros
         
+        # Contratante e Destinatário podem ser CPF (11) ou CNPJ (14)
         campos_cnpj = [
-            ('emitente_cnpj', 'CNPJ Emitente'),
             ('contratante_cnpj', 'CNPJ Contratante'),
             ('destinatario_cnpj', 'CNPJ Destinatário'),
         ]
@@ -258,6 +265,50 @@ class ValidadorCampos:
                     break
         
         return erros
+
+    def _validar_cnpj_emitente(self, cnpj_raw: str) -> Optional[ErroValidacao]:
+        """
+        Valida CNPJ do Emitente (deve ser 14 dígitos).
+        CPF não é aceito neste campo.
+        """
+        cnpj = ''.join(filter(str.isdigit, str(cnpj_raw)))
+        
+        if not cnpj:
+            return ErroValidacao(
+                campo='CNPJ Emitente',
+                mensagem=MensagensErro.CNPJ_VAZIO.format(campo='CNPJ Emitente'),
+                severidade='CRITICO'
+            )
+        
+        # Se veio CPF válido no campo de emitente
+        if len(cnpj) == 11 and validar_cpf(cnpj):
+            return ErroValidacao(
+                campo='CNPJ Emitente',
+                mensagem=f"CNPJ Emitente está como CPF ({cnpj}). Substitua por um CNPJ válido.",
+                valor=cnpj,
+                severidade='CRITICO'
+            )
+        
+        if len(cnpj) != 14:
+            return ErroValidacao(
+                campo='CNPJ Emitente',
+                mensagem=f"CNPJ Emitente tamanho inválido: {len(cnpj)} dígitos (esperado: 14).",
+                valor=cnpj,
+                severidade='CRITICO'
+            )
+        
+        if not validar_cnpj(cnpj):
+            return ErroValidacao(
+                campo='CNPJ Emitente',
+                mensagem=MensagensErro.CNPJ_MODULO11_FALHOU.format(
+                    campo='CNPJ Emitente',
+                    valor=cnpj
+                ),
+                valor=cnpj,
+                severidade='CRITICO'
+            )
+        
+        return None
     
     def _validar_cnpj(self, cnpj_raw: str, campo_nome: str) -> Optional[ErroValidacao]:
         """

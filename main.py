@@ -71,39 +71,7 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
         callback_progresso('abrir', {'arquivo': Path(caminho_pdf).name})
     
     print(f"Processando PDF: {caminho_pdf}")
-    
-    # Extrai dados do PDF
-    extrator = ExtratorPDF(caminho_pdf)
-    try:
-        extrator.abrir_pdf()
-        
-        # Define callback para progresso de páginas
-        def callback_pagina(pagina_atual, total_paginas):
-            if callback_progresso:
-                callback_progresso('extrair', {
-                    'pagina_atual': pagina_atual,
-                    'total_paginas': total_paginas
-                })
-        
-        todos_dados = extrator.extrair_todos_dados(callback_progresso=callback_pagina)
-        print(f"Total de registros extraídos: {len(todos_dados)}")
-        
-        if callback_progresso:
-            callback_progresso('deduplicar', {'total_registros': len(todos_dados)})
-        
-        # Deduplica por número de NF
-        nfs_deduplicadas = extrator.deduplicar_por_nf(todos_dados)
-        print(f"Total de NFs únicas após deduplicação: {len(nfs_deduplicadas)}")
-        
-    finally:
-        extrator.fechar_pdf()
-    
-    # CAMADA DE PROCESSAMENTO ROBUSTA: Validação completa com checksum/integridade
-    # Estratégia: Validação Preventiva + Auto-correção + Delegação (NENHUM registro é removido)
-    # NOVO: Valida TODOS os campos (NF, CTe, CNPJs, Datas) ANTES de gerar TXT
-    if callback_progresso:
-        callback_progresso('processar', {'total_registros': len(nfs_deduplicadas)})
-    
+
     # Função wrapper para converter logs do processador em callback_progresso
     def log_wrapper(mensagem: str):
         """Converte logs do processador para callback_progresso (GUI) ou print (CLI)."""
@@ -123,10 +91,58 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
         else:
             # Fallback para CLI
             print(mensagem)
+
+    def event_wrapper(evento: str, detalhes: dict):
+        if callback_progresso:
+            callback_progresso(evento, detalhes)
+
+    # Usa processador com validação integrada robusta (inclui validação de estrutura do PDF)
+    processador = ProcessadorValidacaoIntegrada(
+        callback_log=log_wrapper,
+        callback_event=event_wrapper
+    )
     
-    # NOVO: Usa processador com validação integrada robusta
-    # Valida checksum, formato e integridade de TODOS os campos
-    processador = ProcessadorValidacaoIntegrada(callback_log=log_wrapper)
+    # Extrai dados do PDF
+    extrator = ExtratorPDF(caminho_pdf)
+    try:
+        extrator.abrir_pdf()
+
+        # Valida estrutura do PDF antes da extração (detecta mudança de layout)
+        primeira_pagina = extrator.pdf.pages[0] if extrator.pdf and extrator.pdf.pages else None
+        texto_pagina = primeira_pagina.extract_text() if primeira_pagina else ""
+        processador.validar_estrutura_pdf(texto_pagina or "")
+        
+        # Define callback para progresso de páginas
+        def callback_pagina(pagina_atual, total_paginas):
+            if callback_progresso:
+                callback_progresso('extrair', {
+                    'pagina_atual': pagina_atual,
+                    'total_paginas': total_paginas
+                })
+        
+        todos_dados = extrator.extrair_todos_dados(callback_progresso=callback_pagina)
+        print(f"Total de registros extraídos: {len(todos_dados)}")
+        
+        
+        # Deduplica por número de NF
+        nfs_deduplicadas = extrator.deduplicar_por_nf(todos_dados)
+        
+        if callback_progresso:
+            callback_progresso('deduplicar', {
+                'total_registros': len(todos_dados),
+                'total_nfs': len(nfs_deduplicadas)
+            })
+        print(f"Total de NFs únicas após deduplicação: {len(nfs_deduplicadas)}")
+        
+    finally:
+        extrator.fechar_pdf()
+    
+    # CAMADA DE PROCESSAMENTO ROBUSTA: Validação completa com checksum/integridade
+    # Estratégia: Validação Preventiva + Auto-correção + Delegação (NENHUM registro é removido)
+    # NOVO: Valida TODOS os campos (NF, CTe, CNPJs, Datas) ANTES de gerar TXT
+    if callback_progresso:
+        callback_progresso('processar', {'total_registros': len(nfs_deduplicadas)})
+    
     
     # Processa com VALIDAÇÃO ROBUSTA: Checksum + Formato + Integridade
     # 1. Valida TODOS os campos (NF, CTe, CNPJs, Datas)
@@ -144,6 +160,7 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
             'total_aprovados': len(nfs_validas),
             'total_com_erros': stats.get('total_com_erros', 0),
             'total_com_erros_criticos': stats.get('total_com_erros_criticos', 0),
+            'total_ajustes_manuais': stats.get('total_ajustes_manuais', 0),
         })
     
     # Extrai mês e ano (usa valores fornecidos ou extrai do PDF)

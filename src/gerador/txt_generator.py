@@ -4,7 +4,8 @@ Implementa as seções EM, TN e CC conforme especificação técnica.
 """
 
 import warnings
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 from .sanitizers import sanitizar_texto, sanitizar_numerico, sanitizar_alfanumerico
 from .validators import validar_cnpj, validar_cpf, is_cpf_convertido, parece_pessoa_fisica_pelo_nome
 from .layout_constants import (
@@ -35,6 +36,25 @@ class GeradorTXT:
             cnpj_rodogarcia: CNPJ da Rodogarcia (será usado na seção EM)
         """
         self.cnpj_rodogarcia = sanitizar_numerico(cnpj_rodogarcia, EM_TAM_CNPJ)
+
+    def _emitir_alerta(self, mensagem: str, callback_progresso=None, tipo: str = "ACAO_NECESSARIA",
+                       nf_num: Optional[str] = None) -> None:
+        """
+        Emite aviso para CLI (warnings) e para GUI (callback_progresso).
+        """
+        # CLI / stdout
+        warnings.warn(mensagem.replace('\n', ' '), UserWarning)
+        # GUI / callback
+        if callback_progresso:
+            callback_progresso('processar_log', {
+                'tipo': tipo,
+                'mensagem': mensagem
+            })
+            callback_progresso('ajuste_manual', {
+                'nf': nf_num,
+                'tipo': tipo,
+                'mensagem': mensagem
+            })
     
     def gerar_linha_EM(self, mes: int, ano: int) -> str:
         """
@@ -79,18 +99,20 @@ class GeradorTXT:
         
         return linha
     
-    def gerar_linha_TN(self, dados_nf: Dict) -> str:
+    def gerar_linha_TN(self, dados_nf: Dict, callback_progresso=None) -> str:
         """
         Gera a linha TN (Transporte Nacional) conforme layout 3.1.9.
         
         Args:
             dados_nf: Dicionário com os dados da Nota Fiscal extraídos do PDF
+            callback_progresso: Callback opcional para logs na GUI
         
         Returns:
             Linha TN formatada com exatamente TN_TAMANHO_TOTAL caracteres
         
-        Raises:
-            ValueError: Se algum CNPJ for inválido segundo algoritmo oficial
+        Observação:
+            Erros de documento (CPF/CNPJ inválido) geram avisos para ajuste manual,
+            mas não impedem a geração do arquivo.
         """
         # CRÍTICO: Validação ANTES de formatar para evitar enviar "lixo" ao SIPROQUIM
         # O validador do SIPROQUIM valida o número formatado (14 dígitos) como CNPJ
@@ -107,15 +129,24 @@ class GeradorTXT:
         
         # Validação de CNPJs/CPFs usando algoritmo oficial
         # CRÍTICO: Diferencia CPF de CNPJ baseado apenas no tamanho (11 vs 14 dígitos)
+        nf_num_display = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+
+        def alertar(mensagem: str, tipo: str = "ACAO_NECESSARIA") -> None:
+            self._emitir_alerta(mensagem, callback_progresso, tipo=tipo, nf_num=nf_num_display)
         
         # Validação para CNPJ Contratante: pode ser CPF (11 dígitos) ou CNPJ (14 dígitos)
         # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_contratante ainda não foi definido
         nome_contratante_raw = dados_nf.get('contratante_nome', '')
-        if len(cnpj_contratante_limpo) == 11:
+        if not cnpj_contratante_limpo:
+            alertar(
+                f"NF {nf_num_display}: Documento Contratante vazio. "
+                f"Verifique o CNPJ/CPF extraído do PDF."
+            )
+        elif len(cnpj_contratante_limpo) == 11:
             # É CPF - valida como CPF
             if not validar_cpf(cnpj_contratante_limpo):
-                raise ValueError(
-                    f"CPF Contratante inválido: {cnpj_contratante_limpo}. "
+                alertar(
+                    f"NF {nf_num_display}: CPF Contratante inválido: {cnpj_contratante_limpo}. "
                     f"Nome: {nome_contratante_raw[:50]}. "
                     f"Verifique se o CPF foi extraído corretamente do PDF."
                 )
@@ -124,44 +155,61 @@ class GeradorTXT:
             if not validar_cnpj(cnpj_contratante_limpo):
                 # Verifica se o nome parece ser de pessoa física
                 if parece_pessoa_fisica_pelo_nome(nome_contratante_raw):
-                    # Aceita sem validação rigorosa para pessoa física
-                    pass
+                    alertar(
+                        f"NF {nf_num_display}: CNPJ Contratante inválido ({cnpj_contratante_limpo}), "
+                        f"mas o nome indica pessoa física. Verifique o documento.",
+                        tipo="ATENCAO"
+                    )
                 else:
-                    raise ValueError(
-                        f"CNPJ Contratante inválido: {cnpj_contratante_limpo}. "
+                    alertar(
+                        f"NF {nf_num_display}: CNPJ Contratante inválido: {cnpj_contratante_limpo}. "
                         f"Nome: {nome_contratante_raw[:50]}. "
                         f"Verifique se o CNPJ foi extraído corretamente do PDF."
                     )
         else:
-            raise ValueError(
-                f"Documento Contratante inválido (deve ter 11 ou 14 dígitos): {cnpj_contratante_limpo}. "
+            alertar(
+                f"NF {nf_num_display}: Documento Contratante inválido "
+                f"(deve ter 11 ou 14 dígitos): {cnpj_contratante_limpo}. "
                 f"Nome: {nome_contratante_raw[:50]}."
             )
         
         # Validação para CNPJ Origem (Emitente) - deve ser CNPJ (14 dígitos)
         # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_origem ainda não foi definido
         nome_origem_raw = dados_nf.get('emitente_nome', '')
-        if len(cnpj_origem_limpo) == 14:
-            if not validar_cnpj(cnpj_origem_limpo):
-                raise ValueError(
-                    f"CNPJ Origem (Emitente) inválido: {cnpj_origem_limpo}. "
-                    f"Nome: {nome_origem_raw[:50]}. "
-                    f"Verifique se o CNPJ foi extraído corretamente do PDF."
-                )
-        else:
-            raise ValueError(
-                f"CNPJ Origem (Emitente) deve ter 14 dígitos, recebido: {len(cnpj_origem_limpo)}. "
-                f"Valor: {cnpj_origem_limpo}. Nome: {nome_origem_raw[:50]}."
+        if not cnpj_origem_limpo:
+            alertar(
+                f"NF {nf_num_display}: CNPJ Emitente vazio. Verifique o emitente no PDF."
+            )
+        elif len(cnpj_origem_limpo) == 11 and validar_cpf(cnpj_origem_limpo):
+            alertar(
+                f"NF {nf_num_display}: Emitente está com CPF ({cnpj_origem_limpo}) no lugar de CNPJ. "
+                f"Nome: {nome_origem_raw[:50]}."
+            )
+        elif len(cnpj_origem_limpo) != 14:
+            alertar(
+                f"NF {nf_num_display}: CNPJ Origem (Emitente) deve ter 14 dígitos, "
+                f"recebido: {len(cnpj_origem_limpo)}. Valor: {cnpj_origem_limpo}. "
+                f"Nome: {nome_origem_raw[:50]}."
+            )
+        elif not validar_cnpj(cnpj_origem_limpo):
+            alertar(
+                f"NF {nf_num_display}: CNPJ Origem (Emitente) inválido: {cnpj_origem_limpo}. "
+                f"Nome: {nome_origem_raw[:50]}. "
+                f"Verifique se o CNPJ foi extraído corretamente do PDF."
             )
         
         # Validação para CNPJ Destino: pode ser CPF (11 dígitos) ou CNPJ (14 dígitos)
         # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_destino ainda não foi definido
         nome_destino_raw = dados_nf.get('destinatario_nome', '')
-        if len(cnpj_destino_limpo) == 11:
+        if not cnpj_destino_limpo:
+            alertar(
+                f"NF {nf_num_display}: Documento Destino vazio. Verifique o destinatário no PDF."
+            )
+        elif len(cnpj_destino_limpo) == 11:
             # É CPF - valida como CPF
             if not validar_cpf(cnpj_destino_limpo):
-                raise ValueError(
-                    f"CPF Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
+                alertar(
+                    f"NF {nf_num_display}: CPF Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
                     f"Nome: {nome_destino_raw[:50]}. "
                     f"Verifique se o CPF foi extraído corretamente do PDF."
                 )
@@ -170,17 +218,21 @@ class GeradorTXT:
             if not validar_cnpj(cnpj_destino_limpo):
                 # Verifica se o nome parece ser de pessoa física
                 if parece_pessoa_fisica_pelo_nome(nome_destino_raw):
-                    # Aceita sem validação rigorosa para pessoa física
-                    pass
+                    alertar(
+                        f"NF {nf_num_display}: CNPJ Destino inválido ({cnpj_destino_limpo}), "
+                        f"mas o nome indica pessoa física. Verifique o documento.",
+                        tipo="ATENCAO"
+                    )
                 else:
-                    raise ValueError(
-                        f"CNPJ Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
+                    alertar(
+                        f"NF {nf_num_display}: CNPJ Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
                         f"Nome: {nome_destino_raw[:50]}. "
                         f"Verifique se o CNPJ foi extraído corretamente do PDF."
                     )
         else:
-            raise ValueError(
-                f"Documento Destino inválido (deve ter 11 ou 14 dígitos): {cnpj_destino_limpo}. "
+            alertar(
+                f"NF {nf_num_display}: Documento Destino inválido "
+                f"(deve ter 11 ou 14 dígitos): {cnpj_destino_limpo}. "
                 f"Nome: {nome_destino_raw[:50]}."
             )
         
@@ -203,15 +255,13 @@ class GeradorTXT:
                 # Verifica se o número formatado passa na validação de CNPJ
                 # Sabemos que vai falhar na validação matemática de CNPJ
                 if not validar_cnpj(cpf_formatado):
-                    # ALTERADO: De raise ValueError para warnings.warn
-                    # Isso permite gerar o arquivo para tentativa de envio ou análise manual
-                    warnings.warn(
-                        f"ALERTA: CPF {campo} válido ({cpf_limpo}) não passa na validação matemática de CNPJ "
-                        f"quando formatado com zeros ({cpf_formatado}). "
-                        f"Nome: {nome[:50]}. "
-                        f"O SIPROQUIM pode rejeitar este registro. "
-                        f"O arquivo será gerado para tentativa de envio ou análise manual.",
-                        UserWarning
+                    self._emitir_alerta(
+                        f"NF {nf_num_display}: CPF {campo} válido ({cpf_limpo}) não passa na validação "
+                        f"matemática de CNPJ quando formatado com zeros ({cpf_formatado}). "
+                        f"Nome: {nome[:50]}. O SIPROQUIM pode rejeitar este registro.",
+                        callback_progresso,
+                        tipo="ALERTA",
+                        nf_num=nf_num_display
                     )
         
         # Verifica cada campo que pode conter CPF
@@ -228,11 +278,12 @@ class GeradorTXT:
             # Avisa mas não bloqueia - pode ser válido em alguns casos
             nf_num_display = str(dados_nf.get('nf_numero', '')).strip() if dados_nf.get('nf_numero') else "N/A"
             tipo_doc = "CPF" if len(cnpj_contratante_limpo) == 11 else "CNPJ"
-            warnings.warn(
-                f"ATENÇÃO: {tipo_doc} Contratante ({cnpj_contratante_limpo}) igual ao {tipo_doc} Destino. "
-                f"Isso pode causar erro no SIPROQUIM se não estiver configurado corretamente. "
-                f"NF: {nf_num_display}",
-                UserWarning
+            self._emitir_alerta(
+                f"NF {nf_num_display}: {tipo_doc} Contratante ({cnpj_contratante_limpo}) igual ao "
+                f"{tipo_doc} Destino. Isso pode causar erro no SIPROQUIM.",
+                callback_progresso,
+                tipo="ATENCAO",
+                nf_num=nf_num_display
             )
         
         # AGORA sim, formata os valores após validação
@@ -243,6 +294,20 @@ class GeradorTXT:
         nome_destino = sanitizar_texto(dados_nf.get('destinatario_nome'), TN_TAM_NOME)
         local_retirada = dados_nf.get('local_retirada', TN_LOCAL_PROPRIO)
         local_entrega = dados_nf.get('local_entrega', TN_LOCAL_PROPRIO)
+
+        # Alerta se algum nome ficou vazio após sanitização (campo obrigatório no layout)
+        def verificar_nome_vazio(nome_sanitizado: str, campo: str, cnpj_raw: str) -> None:
+            if not nome_sanitizado.strip():
+                cnpj_limpo = ''.join(filter(str.isdigit, str(cnpj_raw))) or "N/A"
+                alertar(
+                    f"NF {nf_num_display}: {campo} vazio no TXT (CNPJ {cnpj_limpo}). "
+                    f"Preencha manualmente no arquivo gerado.",
+                    tipo="ACAO_NECESSARIA"
+                )
+
+        verificar_nome_vazio(nome_contratante, "Nome Contratante", cnpj_contratante_raw)
+        verificar_nome_vazio(nome_origem, "Nome Emitente", cnpj_origem_raw)
+        verificar_nome_vazio(nome_destino, "Nome Destinatário", cnpj_destino_raw)
         
         # Formata os CNPJs/CPFs para 14 dígitos (após validação)
         cnpj_contratante = sanitizar_numerico(cnpj_contratante_raw, TN_TAM_CNPJ)
@@ -275,12 +340,13 @@ class GeradorTXT:
         
         return linha
     
-    def gerar_linha_CC(self, dados_cte: Dict) -> str:
+    def gerar_linha_CC(self, dados_cte: Dict, callback_progresso=None) -> str:
         """
         Gera a linha CC (Conhecimento de Carga) conforme layout 3.1.9.1.
         
         Args:
             dados_cte: Dicionário com os dados do CTe extraídos do PDF
+            callback_progresso: Callback opcional para logs na GUI
         
         Returns:
             Linha CC formatada com exatamente CC_TAMANHO_TOTAL caracteres
@@ -373,6 +439,83 @@ class GeradorTXT:
             recebedor_limpo_final = str(recebedor).strip()
             if len(recebedor_limpo_final) < 3:
                 recebedor = RECEBEDOR_NAO_INFORMADO
+
+        # Revisão e alerta para recebedores suspeitos (assinatura/rubrica/CPF/etc.)
+        nf_num_display = str(dados_cte.get('nf_numero', '')).strip() or "N/A"
+        recebedor_raw = str(recebedor).strip()
+
+        def motivos_suspeitos(valor: str) -> list:
+            motivos = []
+            if not valor:
+                return motivos
+            valor_upper = valor.upper()
+            termos_suspeitos = [
+                "ASSINATURA", "ASSINADO", "ASSINADO E CARIMBADO",
+                "RUBRICA", "ASS"
+            ]
+            if valor_upper in termos_suspeitos or any(t in valor_upper for t in termos_suspeitos):
+                motivos.append("texto de assinatura/rubrica")
+            if len(valor) < 5:
+                motivos.append("muito curto")
+            if re.search(r"\b\d{11}\b", valor):
+                motivos.append("contém CPF")
+            if valor == RECEBEDOR_NAO_INFORMADO:
+                motivos.append("não informado")
+            return motivos
+
+        def candidato_valido(valor: str) -> bool:
+            if not valor:
+                return False
+            valor_limpo = str(valor).strip()
+            if len(valor_limpo) < 5:
+                return False
+            if "ASSINATURA" in valor_limpo.upper() or "RUBRICA" in valor_limpo.upper():
+                return False
+            return True
+
+        motivos = motivos_suspeitos(recebedor_raw)
+        if motivos:
+            # Se parece assinatura/CPF/não informado, tenta substituir por destinatário/contratante/emitente
+            auto_revisar = any(m in ("texto de assinatura/rubrica", "contém CPF", "não informado") for m in motivos)
+            if auto_revisar:
+                candidatos = [
+                    dados_cte.get('destinatario_nome'),
+                    dados_cte.get('contratante_nome'),
+                    dados_cte.get('emitente_nome')
+                ]
+                substituto = None
+                for cand in candidatos:
+                    if candidato_valido(cand):
+                        substituto = str(cand).strip()
+                        break
+                if substituto:
+                    self._emitir_alerta(
+                        f"NF {nf_num_display}: Recebedor suspeito ({', '.join(motivos)}): "
+                        f"'{recebedor_raw}'. Substituído por '{substituto}'.",
+                        callback_progresso,
+                        tipo="ATENCAO",
+                        nf_num=nf_num_display
+                    )
+                    recebedor_raw = substituto
+                else:
+                    self._emitir_alerta(
+                        f"NF {nf_num_display}: Recebedor suspeito ({', '.join(motivos)}): '{recebedor_raw}'. "
+                        f"Verifique e ajuste manualmente se necessário.",
+                        callback_progresso,
+                        tipo="ATENCAO",
+                        nf_num=nf_num_display
+                    )
+            else:
+                # Muito curto: apenas alerta (não substitui automaticamente)
+                self._emitir_alerta(
+                    f"NF {nf_num_display}: Recebedor suspeito ({', '.join(motivos)}): '{recebedor_raw}'. "
+                    f"Verifique e ajuste manualmente se necessário.",
+                    callback_progresso,
+                    tipo="ATENCAO",
+                    nf_num=nf_num_display
+                )
+
+        recebedor = recebedor_raw if recebedor_raw else RECEBEDOR_NAO_INFORMADO
         
         recebedor = sanitizar_texto(recebedor, CC_TAM_RECEBEDOR)
         
@@ -413,9 +556,9 @@ class GeradorTXT:
         Returns:
             Caminho do arquivo gerado
         
-        Raises:
-            ValueError: Se algum CNPJ for inválido segundo algoritmo oficial
-            Warning: Se algum CNPJ válido pode não estar cadastrado no SIPROQUIM
+        Observação:
+            Inconsistências de CPF/CNPJ e possíveis rejeições são registradas como alertas,
+            mas o arquivo é gerado para permitir ajustes manuais.
         """
         linhas = []
         cnpjs_validos_alertas = set()  # Para coletar CNPJs que podem não estar cadastrados
@@ -426,9 +569,9 @@ class GeradorTXT:
         # Para cada NF, gerar linha TN seguida de sua linha CC
         for nf in nfs_deduplicadas:
             try:
-                linhas.append(self.gerar_linha_TN(nf))
+                linhas.append(self.gerar_linha_TN(nf, callback_progresso=callback_progresso))
             except ValueError as e:
-                # Se for erro de CNPJ inválido, propaga o erro
+                # Erro estrutural inesperado (ex.: tamanho da linha)
                 raise ValueError(
                     f"Erro ao gerar linha TN para NF {nf.get('nf_numero', 'N/A')}: {str(e)}"
                 ) from e
@@ -448,7 +591,7 @@ class GeradorTXT:
             # Se houver CTe associado, gerar linha CC
             if nf.get('cte_numero'):
                 try:
-                    linhas.append(self.gerar_linha_CC(nf))
+                    linhas.append(self.gerar_linha_CC(nf, callback_progresso=callback_progresso))
                 except ValueError as e:
                     # NOVO: Se houver erro ao gerar CC, avisa mas não bloqueia o processamento
                     # (pode ser que o CTe tenha dados inválidos, mas a NF ainda é válida)
@@ -458,9 +601,7 @@ class GeradorTXT:
                         f"A linha TN foi gerada com sucesso, mas a linha CC correspondente foi pulada.\n"
                         f"Verifique se os dados do CTe foram extraídos corretamente do PDF."
                     )
-                    warnings.warn(aviso_cc.replace('\n', ' '), UserWarning)
-                    if callback_progresso:
-                        callback_progresso('aviso', {'mensagem': aviso_cc})
+                    self._emitir_alerta(aviso_cc, callback_progresso, tipo="ALERTA", nf_num=nf_num)
         
         # Aviso sobre CNPJs válidos mas que podem não estar cadastrados no SIPROQUIM
         if cnpjs_validos_alertas:
@@ -472,10 +613,7 @@ class GeradorTXT:
                 f"Total de CNPJs distintos: {len(cnpjs_validos_alertas)}.\n"
                 f"Caso o problema persista, entre em contato com o suporte: lucasmac.dev@gmail.com"
             )
-            warnings.warn(aviso.replace('\n', ' '), UserWarning)  # Remove quebras para warning
-            if callback_progresso:
-                # Envia mensagem com quebras de linha para melhor formatação no log
-                callback_progresso('aviso', {'mensagem': aviso})
+            self._emitir_alerta(aviso, callback_progresso, tipo="ALERTA", nf_num=None)
         
         # Escrever arquivo
         # CRÍTICO: Garantir que nenhuma linha contenha quebras de linha internas

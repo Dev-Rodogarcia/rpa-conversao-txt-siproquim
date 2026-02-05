@@ -9,8 +9,11 @@ import os
 import threading
 import subprocess
 import traceback
+import unicodedata
+from datetime import datetime
 from pathlib import Path
 from tkinter import StringVar, filedialog, messagebox
+from typing import Optional
 import customtkinter as ctk
 
 # Importações da lógica principal
@@ -55,6 +58,7 @@ class App(ctk.CTk):
         self.title(UIConstants.WINDOW_TITLE)
         self.geometry(UIConstants.WINDOW_SIZE)
         self.resizable(UIConstants.WINDOW_RESIZABLE, UIConstants.WINDOW_RESIZABLE)
+        self.minsize(UIConstants.WINDOW_MIN_WIDTH, UIConstants.WINDOW_MIN_HEIGHT)
         
         # Variáveis de controle
         self.pdf_path = StringVar(value="")
@@ -72,16 +76,30 @@ class App(ctk.CTk):
         self._filiais_manager = FiliaisManager()
         self._progress_manager = ProgressManager()
         self._log_manager = None  # Será inicializado após criar a UI
+        self._ajustes_por_nf = {}
+        self._avisos_gerais = []
+        self._total_registros_extraidos = 0
+        self._total_nfs_dedup = 0
+        self._ultima_estatistica = {}
+        self._logs_fullscreen = False
+        self._logs_grid_info = None
+        self._logs_prev_geom = None
+        self._logs_animando = False
         
         self._build_ui()
         
         # Inicializa gerenciador de logs após criar os widgets
         # Passa frame_logs_col para mostrar/ocultar toda a coluna de logs se necessário
-        self._log_manager = LogManager(self.textbox_logs, self.frame_logs_col)
+        self._log_manager = LogManager(
+            self.textbox_logs,
+            self.frame_logs_col,
+            UIConstants.FONT_FAMILY_LOGS,
+            UIConstants.LOG_FONT_SIZE_DEFAULT
+        )
         
         # Log inicial de inicialização
         try:
-            self._log_manager.adicionar_info("=" * 60)
+            self._log_manager.adicionar_banner("SISTEMA INICIALIZADO", "INFO")
             self._log_manager.adicionar_sucesso("Sistema inicializado com sucesso!")
             self._log_manager.adicionar_info(f"Versão: SIPROQUIM Converter V5 by valentelucass")
             
@@ -109,7 +127,6 @@ class App(ctk.CTk):
                 self._log_manager.adicionar_aviso("Atenção: Combo de filiais não foi populado corretamente!")
                 self._log_manager.adicionar_debug(f"Opções no combo: {opcoes_combo}")
             
-            self._log_manager.adicionar_info("=" * 60)
             self._log_manager.adicionar_info("Aguardando ação do usuário...")
         except Exception as e:
             # Se houver erro na inicialização dos logs, tenta adicionar de forma segura
@@ -368,17 +385,79 @@ class App(ctk.CTk):
             pady=(0, 0)
         )
         self.frame_logs_col.columnconfigure(0, weight=1)
-        self.frame_logs_col.rowconfigure(1, weight=1)
+        self.frame_logs_col.rowconfigure(2, weight=1)
         self.main_frame.grid_columnconfigure(1, weight=1, minsize=400)  # Coluna 2: logs
         
-        # Título dos Logs
+        # Cabeçalho dos Logs (título + controles de fonte)
+        self.frame_logs_header = ctk.CTkFrame(self.frame_logs_col, fg_color="transparent")
+        self.frame_logs_header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.frame_logs_header.columnconfigure(0, weight=1)
+        self.frame_logs_header.columnconfigure(1, weight=0)
+        
         self.lbl_logs_title = ctk.CTkLabel(
-            self.frame_logs_col,
+            self.frame_logs_header,
             text=UIConstants.TEXT_LOGS_TITLE,
             font=ctk.CTkFont(size=UIConstants.FONT_SIZE_HEADING, weight="bold"),
             anchor="w"
         )
-        self.lbl_logs_title.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.lbl_logs_title.grid(row=0, column=0, sticky="w")
+        
+        self.frame_font_controls = ctk.CTkFrame(self.frame_logs_header, fg_color="transparent")
+        self.frame_font_controls.grid(row=0, column=1, sticky="e")
+        
+        self.btn_font_minus = ctk.CTkButton(
+            self.frame_font_controls,
+            text="A-",
+            width=40,
+            height=24,
+            command=lambda: self._ajustar_fonte_logs(-UIConstants.LOG_FONT_SIZE_STEP),
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_font_minus.grid(row=0, column=0, padx=(0, 6))
+        
+        self.btn_font_plus = ctk.CTkButton(
+            self.frame_font_controls,
+            text="A+",
+            width=40,
+            height=24,
+            command=lambda: self._ajustar_fonte_logs(UIConstants.LOG_FONT_SIZE_STEP),
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_font_plus.grid(row=0, column=1)
+
+        self.btn_export_logs = ctk.CTkButton(
+            self.frame_font_controls,
+            text="Exportar",
+            width=80,
+            height=24,
+            command=self._exportar_logs,
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_export_logs.grid(row=0, column=2, padx=(8, 0))
+
+        self.btn_logs_fullscreen = ctk.CTkButton(
+            self.frame_font_controls,
+            text="Tela cheia",
+            width=90,
+            height=24,
+            command=self._toggle_logs_fullscreen,
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_logs_fullscreen.grid(row=0, column=3, padx=(8, 0))
+        
+        # Legenda dos Logs
+        self.lbl_logs_legend = ctk.CTkLabel(
+            self.frame_logs_col,
+            text=UIConstants.TEXT_LOGS_LEGEND,
+            font=ctk.CTkFont(size=UIConstants.FONT_SIZE_TINY),
+            text_color=UIConstants.COLOR_TEXT_HINT,
+            anchor="w"
+        )
+        self.lbl_logs_legend.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         
         # Frame de logs (scrollable)
         self.frame_logs = ctk.CTkFrame(
@@ -386,14 +465,14 @@ class App(ctk.CTk):
             fg_color=UIConstants.COLOR_BG_FRAME_LOGS,
             corner_radius=UIConstants.CORNER_RADIUS_LOGS
         )
-        self.frame_logs.grid(row=1, column=0, sticky="nsew")
+        self.frame_logs.grid(row=2, column=0, sticky="nsew")
         self.frame_logs.columnconfigure(0, weight=1)
         self.frame_logs.rowconfigure(0, weight=1)
         
         # Textbox para logs (scrollable)
         self.textbox_logs = ctk.CTkTextbox(
             self.frame_logs,
-            font=ctk.CTkFont(family=UIConstants.FONT_FAMILY_LOGS, size=UIConstants.FONT_SIZE_TINY),
+            font=ctk.CTkFont(family=UIConstants.FONT_FAMILY_LOGS, size=UIConstants.LOG_FONT_SIZE_DEFAULT),
             text_color=UIConstants.COLOR_LOG_ERROR,
             fg_color=UIConstants.COLOR_BG_TEXTBOX
         )
@@ -596,9 +675,16 @@ class App(ctk.CTk):
             # Limpa logs anteriores
             if self._log_manager:
                 self._log_manager.limpar()
-                self._log_manager.adicionar_info("=" * 60)
-                self._log_manager.adicionar_info("Iniciando validação do formulário...")
+                self._log_manager.adicionar_banner("INICIO DO PROCESSAMENTO - RPA SIPROQUIM", "SYSTEM")
+                self._log_manager.adicionar("Validando formulario...", "STATUS")
             
+            # Reseta ajustes para novo processamento
+            self._ajustes_por_nf = {}
+            self._avisos_gerais = []
+            self._total_registros_extraidos = 0
+            self._total_nfs_dedup = 0
+            self._ultima_estatistica = {}
+
             pdf = self.pdf_path.get()
             cnpj = somente_digitos(self.cnpj_mapa.get())
             mes_str = self.mes_selecionado.get()
@@ -613,8 +699,15 @@ class App(ctk.CTk):
                 return
             
             if self._log_manager:
-                self._log_manager.adicionar_sucesso("Formulário validado com sucesso!")
-                self._log_manager.adicionar_info("=" * 60)
+                self._log_manager.adicionar("Formulario validado com sucesso! [OK]", "STATUS")
+                self._log_manager.adicionar(
+                    f"ARQUIVO: {Path(dados['pdf']).name}",
+                    "CONFIG"
+                )
+                self._log_manager.adicionar(
+                    f"CNPJ: {dados['cnpj']} | PERIODO: {dados['mes_numero']:02d}/{dados['ano_numero']}",
+                    "CONFIG"
+                )
         except Exception as e:
             erro_msg = f"Erro ao validar formulário: {str(e)}"
             if self._log_manager:
@@ -654,22 +747,384 @@ class App(ctk.CTk):
         """Limpa todos os logs (deprecated - usar _log_manager)."""
         if self._log_manager:
             self._log_manager.limpar()
+    
+    def _ajustar_fonte_logs(self, delta: int) -> None:
+        """Ajusta o tamanho da fonte do log para melhor visualização."""
+        if self._log_manager:
+            self._log_manager.ajustar_fonte(delta)
+
+    def _exportar_logs(self) -> None:
+        """Exporta os logs para um arquivo .txt."""
+        if not self._log_manager:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_padrao = f"logs_siproquim_{timestamp}.txt"
+        caminho = filedialog.asksaveasfilename(
+            title="Exportar logs",
+            defaultextension=".txt",
+            initialfile=nome_padrao,
+            filetypes=[("Arquivo de texto", "*.txt")]
+        )
+        if caminho:
+            self._log_manager.exportar(caminho)
+            self._log_manager.adicionar_info(f"Logs exportados para: {caminho}")
+
+    def _toggle_logs_fullscreen(self) -> None:
+        """Alterna o modo de tela cheia dos logs."""
+        if self._logs_fullscreen:
+            self._sair_logs_fullscreen()
+        else:
+            self._entrar_logs_fullscreen()
+
+    def _entrar_logs_fullscreen(self) -> None:
+        """Expande a coluna de logs para ocupar todo o layout."""
+        if self._logs_fullscreen or not self.frame_logs_col:
+            return
+
+        self.update_idletasks()
+        self._logs_fullscreen = True
+        if self.btn_logs_fullscreen:
+            self.btn_logs_fullscreen.configure(text="Voltar")
+
+        # Esconde outros blocos para liberar espaco total
+        self.lbl_titulo.grid_remove()
+        self.lbl_subtitulo.grid_remove()
+        self.frame_formulario.grid_remove()
+        self.btn_converter.grid_remove()
+
+        # Ajusta grid principal para fullscreen
+        self.main_frame.grid_rowconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(1, weight=0)
+        self.main_frame.grid_rowconfigure(2, weight=0)
+        self.main_frame.grid_rowconfigure(3, weight=0)
+        self.main_frame.grid_columnconfigure(0, weight=1, minsize=0)
+        self.main_frame.grid_columnconfigure(1, weight=1, minsize=0)
+
+        # Move logs para ocupar toda a area
+        self.frame_logs_col.grid_forget()
+        self.frame_logs_col.grid(
+            row=0, column=0, rowspan=4, columnspan=2,
+            sticky="nsew", padx=0, pady=0
+        )
+        self.frame_logs_col.rowconfigure(2, weight=1)
+        self.frame_logs_col.columnconfigure(0, weight=1)
+        self.frame_logs_col.lift()
+        self.textbox_logs.focus_set()
+
+    def _sair_logs_fullscreen(self) -> None:
+        """Restaura o layout normal dos logs."""
+        if not self._logs_fullscreen or not self.frame_logs_col:
+            return
+
+        self.update_idletasks()
+        self._logs_fullscreen = False
+        if self.btn_logs_fullscreen:
+            self.btn_logs_fullscreen.configure(text="Tela cheia")
+
+        # Restaura grid principal
+        self.main_frame.grid_rowconfigure(0, weight=0)
+        self.main_frame.grid_rowconfigure(1, weight=0)
+        self.main_frame.grid_rowconfigure(2, weight=1)
+        self.main_frame.grid_rowconfigure(3, weight=0)
+        self.main_frame.grid_columnconfigure(0, weight=1, minsize=500)
+        self.main_frame.grid_columnconfigure(1, weight=1, minsize=400)
+
+        # Restaura logs para posicao original (grid explicito)
+        self.frame_logs_col.grid_forget()
+        self.frame_logs_col.grid(
+            row=2, column=1, sticky="nsew",
+            padx=(15, UIConstants.PADDING_FRAME), pady=(0, 0)
+        )
+
+        # Restaura outros blocos (grid explicito)
+        self.lbl_titulo.grid(row=0, column=0, columnspan=2, pady=(15, 5), sticky="n")
+        self.lbl_subtitulo.grid(row=1, column=0, columnspan=2, pady=(0, 15), sticky="n")
+        self.frame_formulario.grid(
+            row=2, column=0, sticky="nsew",
+            padx=(UIConstants.PADDING_FRAME, 15), pady=(0, 0)
+        )
+        self.btn_converter.grid(
+            row=3, column=0, columnspan=2, sticky="ew",
+            padx=UIConstants.PADDING_FRAME, pady=(15, 15)
+        )
+        self.update_idletasks()
+
+    def _animar_logs(self, inicio, fim, passos: int = 10, duracao_ms: int = 160, ao_final=None) -> None:
+        """Anima a transiÃ§Ã£o do frame de logs."""
+        if self._logs_animando:
+            return
+        self._logs_animando = True
+        try:
+            x0, y0, w0, h0 = inicio
+            x1, y1, w1, h1 = fim
+        except Exception:
+            self._logs_animando = False
+            if ao_final:
+                ao_final()
+            return
+
+        if passos <= 0:
+            passos = 1
+        intervalo = max(10, int(duracao_ms / passos))
+
+        def step(i: int):
+            if not self._logs_animando:
+                return
+            t = i / passos
+            x = int(x0 + (x1 - x0) * t)
+            y = int(y0 + (y1 - y0) * t)
+            w = int(w0 + (w1 - w0) * t)
+            h = int(h0 + (h1 - h0) * t)
+            self.frame_logs_col.place(x=x, y=y, width=w, height=h)
+            if i < passos:
+                self.after(intervalo, lambda: step(i + 1))
+            else:
+                self._logs_animando = False
+                if ao_final:
+                    ao_final()
+
+        step(1)
+
+    def _formatar_barra_progresso(self, progresso: float, largura: int = 20) -> str:
+        """Formata uma barra de progresso textual."""
+        try:
+            progresso = float(progresso)
+        except (TypeError, ValueError):
+            progresso = 0.0
+        progresso = max(0.0, min(1.0, progresso))
+        cheios = int(progresso * largura)
+        if progresso >= 1.0:
+            cheios = largura
+        vazios = max(0, largura - cheios)
+        return f"[{'#' * cheios}{'-' * vazios}]"
+
+    def _formatar_check(self, label: str, valor: str, largura: int = 32) -> str:
+        """Formata linhas do relatorio final com alinhamento pontilhado."""
+        base = f"{label}:"
+        if len(base) >= largura:
+            return f"{base} {valor}"
+        pontos = "." * (largura - len(base))
+        return f"{base}{pontos} {valor}"
+
+    def _normalizar_texto(self, texto: str) -> str:
+        """Remove acentos e normaliza texto para classificacao."""
+        texto = texto or ""
+        texto = unicodedata.normalize("NFD", texto.lower())
+        return "".join(ch for ch in texto if unicodedata.category(ch) != "Mn")
+
+    def _limpar_prefixo_mensagem(self, mensagem: str, nf: Optional[str] = None) -> str:
+        """Remove prefixos padrao e o prefixo NF de mensagens."""
+        msg = (mensagem or "").strip()
+        if nf:
+            prefixo_nf = f"NF {nf}:"
+            if msg.startswith(prefixo_nf):
+                msg = msg[len(prefixo_nf):].strip()
+        for prefixo in ("AVISO:", "ALERTA:", "ATENCAO:", "ATENÇÃO:", "WARNING:", "WARN:"):
+            if msg.upper().startswith(prefixo):
+                msg = msg[len(prefixo):].strip()
+        return msg
+
+    def _classificar_ajuste(self, mensagem: str) -> dict:
+        """Classifica um ajuste para resumo do analista."""
+        detalhe = " ".join((mensagem or "").split())
+        texto = self._normalizar_texto(detalhe)
+
+        tipo = "REVISAO"
+        acao = "Verifique e ajuste manualmente no TXT, se necessario."
+
+        if "recebedor suspeito" in texto:
+            tipo = "RECEBEDOR"
+            acao = "Verifique o recebedor e ajuste se necessario."
+        elif "contratante" in texto and "igual ao" in texto and "destino" in texto:
+            tipo = "REGRA NEGOCIO"
+            acao = "Valide se o SIPROQUIM aceita operacao para o mesmo CNPJ."
+        elif "cpf" in texto and "ao inves de cnpj" in texto:
+            tipo = "CPF DETECTADO"
+            acao = "Substitua por um CNPJ valido no TXT."
+        elif "cpf" in texto and "nao passa" in texto and "cnpj" in texto:
+            tipo = "VALIDACAO"
+            acao = "SIPROQUIM pode rejeitar; substitua por CNPJ valido."
+        elif "cpf" in texto and "invalido" in texto:
+            tipo = "CPF INVALIDO"
+            acao = "Corrija o CPF no TXT."
+        elif "cnpj" in texto and "invalido" in texto:
+            tipo = "CNPJ INVALIDO"
+            acao = "Corrija o CNPJ no TXT."
+        elif "tamanho" in texto and "digito" in texto:
+            tipo = "DOCUMENTO"
+            acao = "Corrija o documento no TXT."
+        elif "nome" in texto and "vazio" in texto:
+            tipo = "DADO AUSENTE"
+            acao = "Preencha manualmente no TXT."
+        elif "documento" in texto and "vazio" in texto:
+            tipo = "DADO AUSENTE"
+            acao = "Preencha manualmente no TXT."
+        elif "sem nome" in texto:
+            tipo = "DADO AUSENTE"
+            acao = "Preencha o nome manualmente."
+        elif "linha cc" in texto and "nao gerada" in texto:
+            tipo = "CTE"
+            acao = "Verifique os dados do CTe no PDF."
+
+        return {"tipo": tipo, "detalhe": detalhe, "acao": acao}
+
+    def _normalizar_log_processador(self, tipo: str, mensagem: str) -> Optional[tuple]:
+        """Normaliza logs do processador para reduzir ruído e melhorar layout."""
+        if not mensagem:
+            return None
+        msg = mensagem.strip()
+        tipo_norm = (tipo or "INFO").upper()
+
+        # Suprime avisos que serão agrupados no resumo manual
+        if tipo_norm in ("ACAO_NECESSARIA", "ATENCAO", "ALERTA"):
+            return None
+
+        # Suprime separadores e relatorios duplicados do processador
+        if msg.startswith("="):
+            return None
+        msg_norm = self._normalizar_texto(msg)
+        relatorio_prefixos = (
+            "relatorio final",
+            "total de registros processados",
+            "registros corrigidos",
+            "registros com erros",
+            "total de erros encontrados",
+            "ajustes manuais necessarios",
+            "total exportado para txt",
+        )
+        if any(msg_norm.startswith(prefixo) for prefixo in relatorio_prefixos):
+            return None
+
+        if "validacao robusta" in msg_norm or "sistema de validacao" in msg_norm:
+            return None
+
+        if msg_norm.startswith("estrutura do pdf validada"):
+            return ("STATUS", "Estrutura do PDF validada... [OK]")
+
+        if tipo_norm == "CRITICO":
+            tipo_norm = "ERRO"
+        if tipo_norm == "VALIDACAO":
+            tipo_norm = "INFO"
+        if tipo_norm not in UIConstants.LOG_TIPOS:
+            tipo_norm = "INFO"
+
+        return (tipo_norm, msg)
+
+    def _registrar_ajuste(self, nf: Optional[str], tipo: str, mensagem: str) -> None:
+        """Armazena ajustes para resumo final da analista."""
+        if not mensagem:
+            return
+        if nf and nf not in ("N/A", "NA"):
+            chave = str(nf)
+            msg = self._limpar_prefixo_mensagem(mensagem, chave)
+            info = self._classificar_ajuste(msg)
+            if info.get("tipo") == "REVISAO" and tipo:
+                info["tipo"] = tipo.replace("_", " ").strip()
+            self._ajustes_por_nf.setdefault(chave, [])
+            if info not in self._ajustes_por_nf[chave]:
+                self._ajustes_por_nf[chave].append(info)
+        else:
+            msg = self._limpar_prefixo_mensagem(mensagem, None)
+            if msg and msg not in self._avisos_gerais:
+                self._avisos_gerais.append(msg)
+
+    def _log_resumo_analista(self) -> None:
+        """Exibe um resumo final para a analista."""
+        if not self._log_manager:
+            return
+        total_nfs = len(self._ajustes_por_nf)
+
+        if total_nfs == 0:
+            self._log_manager.adicionar_banner("REVISAO MANUAL", "CHECK")
+            self._log_manager.adicionar_sucesso("Nenhum ajuste manual detectado.")
+            return
+
+        self._log_manager.adicionar("-" * 80, "SYSTEM")
+        self._log_manager.adicionar(
+            f"REVISAO MANUAL NECESSARIA - {total_nfs} NOTAS COM PENDENCIAS",
+            "AVISO"
+        )
+        self._log_manager.adicionar("-" * 80, "SYSTEM")
+
+        if total_nfs > 0:
+            def _key_nf(x):
+                return int(x) if x.isdigit() else x
+
+            linhas = []
+            for nf in sorted(self._ajustes_por_nf.keys(), key=_key_nf):
+                itens = self._ajustes_por_nf[nf]
+                if not itens:
+                    continue
+                primeiro = itens[0]
+                tipo_pri = primeiro.get("tipo", "REVISAO")
+                detalhe_pri = primeiro.get("detalhe", "")
+                linhas.append(f"NF {nf:<6} [{tipo_pri}] {detalhe_pri}")
+
+                for item in itens[1:]:
+                    tipo = item.get("tipo", "REVISAO")
+                    detalhe = item.get("detalhe", "")
+                    linhas.append(f"          [{tipo}] {detalhe}")
+
+                acoes = [item.get("acao") for item in itens if item.get("acao")]
+                acoes_unicas = []
+                for acao in acoes:
+                    if acao and acao not in acoes_unicas:
+                        acoes_unicas.append(acao)
+                if acoes_unicas:
+                    linhas.append(f"          > ACAO: {' | '.join(acoes_unicas)}")
+
+            if linhas:
+                self._log_manager.adicionar("\n".join(linhas), "INFO")
+
+    def _log_relatorio_final(self) -> None:
+        """Exibe o relatorio final com os principais indicadores."""
+        if not self._log_manager:
+            return
+
+        stats = self._ultima_estatistica or {}
+        total_aprovados = stats.get('total_aprovados')
+        if total_aprovados is None:
+            total_aprovados = self._total_nfs_dedup or 0
+        total_corrigidos = stats.get('total_corrigidos', 0)
+        total_com_erros = stats.get('total_com_erros', 0)
+        total_criticos = stats.get('total_com_erros_criticos', 0)
+        total_ajustes = stats.get('total_ajustes_manuais', 0)
+
+        if total_criticos > 0:
+            status_final = "FALHA (Erros criticos)"
+        elif total_ajustes > 0 or total_com_erros > 0:
+            status_final = "SUCESSO (Com ressalvas)"
+        else:
+            status_final = "SUCESSO"
+
+        self._log_manager.adicionar_banner("FINALIZACAO DO PROCESSO", "RELATORIO")
+        self._log_manager.adicionar(
+            f"Status Final: {status_final} | Total: {total_aprovados} NFs",
+            "CHECK"
+        )
+        self._log_manager.adicionar(self._formatar_check("Total Processado", str(total_aprovados)), "CHECK")
+        self._log_manager.adicionar(self._formatar_check("Ajustes Automaticos", str(total_corrigidos)), "CHECK")
+        self._log_manager.adicionar(self._formatar_check("Ajustes Manuais", str(total_ajustes)), "CHECK")
+        self._log_manager.adicionar(self._formatar_check("Erros Criticos", str(total_criticos)), "CHECK")
+        self._log_manager.adicionar(self._formatar_check("Total Exportado", str(total_aprovados)), "CHECK")
+
+        if self._avisos_gerais:
+            self._log_manager.adicionar("Avisos gerais:", "ALERTA")
+            for aviso in self._avisos_gerais:
+                self._log_manager.adicionar(aviso, "ALERTA")
 
     def _run_conversion(self, pdf, cnpj, saida_path, mes, ano):
-        """Executa a conversão do PDF em thread separada."""
+        """Executa a conversao do PDF em thread separada."""
         try:
-            self.after(0, lambda: self._log_manager.adicionar_info(f"Iniciando processamento..."))
-            self.after(0, lambda: self._log_manager.adicionar_info(f"PDF: {Path(pdf).name}"))
-            self.after(0, lambda: self._log_manager.adicionar_info(f"CNPJ: {cnpj}"))
-            self.after(0, lambda: self._log_manager.adicionar_info(f"Período: {mes:02d}/{ano}"))
-            
+            self.after(0, lambda: self._log_manager.adicionar("Iniciando processamento...", "SYSTEM"))
+
             # Callback de progresso para atualizar UI
             def callback_progresso(etapa, detalhes):
                 try:
                     if etapa == 'abrir':
                         arquivo = detalhes.get('arquivo', '')
                         self.after(0, lambda: self._atualizar_status('Abrindo PDF...', arquivo))
-                        self.after(0, lambda: self._log_manager.adicionar_info(f"Abrindo PDF: {arquivo}"))
+                        self.after(0, lambda: self._log_manager.adicionar(f"Abrindo PDF: {arquivo}", "STATUS"))
                     elif etapa == 'extrair':
                         pagina_atual = detalhes.get('pagina_atual', 0)
                         total_paginas = detalhes.get('total_paginas', 0)
@@ -677,60 +1132,105 @@ class App(ctk.CTk):
                         self._progress_manager.pagina_atual = pagina_atual
                         progresso = self._progress_manager.calcular_progresso_extracao(pagina_atual, total_paginas)
                         self.after(0, lambda: self._atualizar_progresso_extracao(pagina_atual, total_paginas, progresso))
-                        
-                        # Log a cada N páginas para não poluir muito
+
                         if self._progress_manager.deve_logar_pagina(pagina_atual, total_paginas):
-                            self.after(0, lambda: self._log_manager.adicionar_info(f"Extraindo dados... Página {pagina_atual}/{total_paginas}"))
+                            barra = self._formatar_barra_progresso(progresso)
+                            percentual = int(progresso * 100)
+                            msg = f"Extraindo dados: {barra} {percentual}% (Pag {pagina_atual}/{total_paginas})"
+                            self.after(0, lambda m=msg: self._log_manager.adicionar(m, "PROGRESSO"))
                     elif etapa == 'deduplicar':
                         total = detalhes.get('total_registros', 0)
+                        total_nfs = detalhes.get('total_nfs', 0)
+                        self._total_registros_extraidos = total
+                        self._total_nfs_dedup = total_nfs
                         self.after(0, lambda: self._atualizar_status('Deduplicando registros...', f'{total} registros encontrados'))
                         self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_DEDUPLICAR))
-                        self.after(0, lambda: self._log_manager.adicionar_info(f"Deduplicando {total} registros..."))
+                        self.after(0, lambda: self._log_manager.adicionar(
+                            f"Registros encontrados: {total} | Apos deduplicacao: {total_nfs}",
+                            "INFO"
+                        ))
+                    elif etapa == 'processar':
+                        if 'total_registros' in detalhes:
+                            total = detalhes.get('total_registros', 0)
+                            self.after(0, lambda: self._log_manager.adicionar(f"Validando {total} registros...", "STATUS"))
+                            self.after(0, lambda: self._log_manager.adicionar(
+                                "Aplicando Validacao Robusta (CHECKSUM + INTEGRIDADE)",
+                                "INFO"
+                            ))
+                        else:
+                            self._ultima_estatistica = {
+                                'total_aprovados': detalhes.get('total_aprovados'),
+                                'total_corrigidos': detalhes.get('total_corrigidos', 0),
+                                'total_com_erros': detalhes.get('total_com_erros', 0),
+                                'total_com_erros_criticos': detalhes.get('total_com_erros_criticos', 0),
+                                'total_ajustes_manuais': detalhes.get('total_ajustes_manuais', 0),
+                            }
+                            ajustes = self._ultima_estatistica.get('total_ajustes_manuais', 0)
+                            self.after(0, lambda: self._log_manager.adicionar(
+                                f"Validacao concluida. Ajustes manuais: {ajustes}",
+                                "STATUS"
+                            ))
                     elif etapa == 'gerar':
                         total_nfs = detalhes.get('total_nfs', 0)
-                        self.after(0, lambda: self._atualizar_status('Gerando arquivo TXT...', f'{total_nfs} NFs únicas'))
+                        self.after(0, lambda: self._atualizar_status('Gerando arquivo TXT...', f'{total_nfs} NFs unicas'))
                         self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_GERAR))
-                        self.after(0, lambda: self._log_manager.adicionar_info(f"Gerando TXT com {total_nfs} NFs únicas..."))
+                        self.after(0, lambda: self._log_manager.adicionar(
+                            f"Gerando TXT com {total_nfs} NFs unicas...",
+                            "STATUS"
+                        ))
                     elif etapa == 'aviso':
                         mensagem = detalhes.get('mensagem', '')
-                        if mensagem:
-                            self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
-                    elif etapa == 'processar_log':
-                        # Logs do processador (validação robusta: CRITICO, ERRO, ALERTA, VALIDACAO, etc.)
-                        mensagem = detalhes.get('mensagem', '')
-                        tipo = detalhes.get('tipo', 'INFO')
+                        tipo = detalhes.get('tipo', 'AVISO')
                         if mensagem:
                             if tipo in ('ERRO', 'CRITICO'):
                                 self.after(0, lambda: self._log_manager.adicionar_erro(mensagem))
-                            elif tipo == 'SUCESSO':
-                                self.after(0, lambda: self._log_manager.adicionar_sucesso(mensagem))
                             elif tipo in ('ATENCAO', 'ACAO', 'ACAO_NECESSARIA', 'ALERTA'):
-                                self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
-                            elif tipo == 'VALIDACAO':
-                                self.after(0, lambda: self._log_manager.adicionar_info(mensagem))
-                            else:  # INFO ou padrão
-                                self.after(0, lambda: self._log_manager.adicionar_info(mensagem))
+                                self._registrar_ajuste(None, tipo, mensagem)
+                            else:
+                                self.after(0, lambda: self._log_manager.adicionar(mensagem, "INFO"))
+                    elif etapa == 'ajuste_manual':
+                        nf = detalhes.get('nf')
+                        tipo = detalhes.get('tipo', 'AVISO')
+                        mensagem = detalhes.get('mensagem', '')
+                        self._registrar_ajuste(nf, tipo, mensagem)
+                    elif etapa == 'processar_log':
+                        mensagem = detalhes.get('mensagem', '')
+                        tipo = detalhes.get('tipo', 'INFO')
+                        normalizado = self._normalizar_log_processador(tipo, mensagem)
+                        if normalizado:
+                            tipo_norm, msg_norm = normalizado
+                            if tipo_norm == 'ERRO':
+                                self.after(0, lambda: self._log_manager.adicionar_erro(msg_norm))
+                            elif tipo_norm == 'SUCESSO':
+                                self.after(0, lambda: self._log_manager.adicionar_sucesso(msg_norm))
+                            elif tipo_norm in ('AVISO', 'ALERTA', 'ATENCAO', 'ACAO_NECESSARIA'):
+                                self.after(0, lambda: self._log_manager.adicionar_aviso(msg_norm))
+                            else:
+                                self.after(0, lambda: self._log_manager.adicionar(msg_norm, tipo_norm))
                     elif etapa == 'finalizar':
                         self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO))
                 except Exception as e:
                     self.after(0, lambda: self._log_manager.adicionar_erro(f"Erro no callback: {str(e)}"))
-            
+
             # Processa o PDF
             caminho_final = processar_pdf(
                 pdf, cnpj, saida_path,
                 callback_progresso=callback_progresso,
                 mes=mes, ano=ano
             )
-            self.after(0, lambda: self._log_manager.adicionar_sucesso(f"Processamento concluído com sucesso!"))
-            self.after(0, lambda: self._log_manager.adicionar_sucesso(f"Arquivo salvo em: {caminho_final}"))
+            self.after(0, self._log_resumo_analista)
+            self.after(0, self._log_relatorio_final)
+            self.after(0, lambda: self._log_manager.adicionar("Processamento concluido com sucesso!", "SUCESSO"))
+            self.after(0, lambda: self._log_manager.adicionar(f"ARQUIVO GERADO: {caminho_final}", "EXPORT"))
+            self.after(0, lambda: self._log_manager.adicionar("=" * 60, "SYSTEM"))
             self.after(0, lambda: self._on_sucesso(caminho_final))
-                
+
         except FileNotFoundError as e:
-            erro_msg = f"Arquivo não encontrado: {str(e)}"
+            erro_msg = f"Arquivo nao encontrado: {str(e)}"
             self.after(0, lambda: self._log_manager.adicionar_erro(erro_msg))
             self.after(0, lambda: self._on_erro(erro_msg))
         except ValueError as e:
-            erro_msg = f"Erro de validação: {str(e)}"
+            erro_msg = f"Erro de validacao: {str(e)}"
             self.after(0, lambda: self._log_manager.adicionar_erro(erro_msg))
             self.after(0, lambda: self._on_erro(erro_msg))
         except Exception as e:
@@ -741,15 +1241,17 @@ class App(ctk.CTk):
             self.after(0, lambda: self._log_manager.adicionar_debug(f"Detalhes do erro:"))
             # Divide o traceback em linhas para melhor legibilidade
             linhas_traceback = erro_completo.split('\n')
-            for linha in linhas_traceback[:15]:  # Primeiras 15 linhas do traceback
+            for linha in linhas_traceback[:15]:
                 if linha.strip():
                     self.after(0, lambda l=linha: self._log_manager.adicionar_debug(f"  {l}"))
             if len(linhas_traceback) > 15:
-                self.after(0, lambda: self._log_manager.adicionar_debug(f"  ... ({len(linhas_traceback) - 15} linhas omitidas)"))
+                self.after(0, lambda: self._log_manager.adicionar_debug(
+                    f"  ... ({len(linhas_traceback) - 15} linhas omitidas)"
+                ))
             self.after(0, lambda: self._log_manager.adicionar_erro("=" * 60))
-            self.after(0, lambda: self._log_manager.adicionar_info("Verifique os logs acima para mais detalhes."))
+            self.after(0, lambda: self._log_manager.adicionar("Verifique os logs acima para mais detalhes.", "INFO"))
             self.after(0, lambda: self._on_erro(erro_msg))
-    
+
     def _atualizar_progresso_extracao(self, pagina_atual, total_paginas, progresso):
         """Atualiza progresso durante extração de páginas."""
         self.progress_bar.set(progresso)
