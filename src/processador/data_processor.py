@@ -34,6 +34,20 @@ class SiproquimProcessor:
             self.log(msg_formatada)
         else:
             print(msg_formatada)
+
+    @staticmethod
+    def _normalizar_texto(valor: object) -> str:
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.upper() in {"NONE", "NULL", "N/A", "NA", "NAN"}:
+            return ""
+        return texto
+
+    @staticmethod
+    def _normalizar_documento(valor: object) -> str:
+        texto = SiproquimProcessor._normalizar_texto(valor)
+        return ''.join(filter(str.isdigit, texto))
     
     def filtrar_dados_validos(self, nfs_extraidas: List[Dict]) -> List[Dict]:
         """
@@ -75,12 +89,11 @@ class SiproquimProcessor:
         ]
 
         for chave_cnpj, chave_nome, tipo_pessoa in campos:
-            cnpj_raw = str(nf.get(chave_cnpj, ''))
-            cnpj = ''.join(filter(str.isdigit, cnpj_raw))
-            nome = str(nf.get(chave_nome, '')).strip()
+            cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
+            nome = self._normalizar_texto(nf.get(chave_nome, ''))
 
             # Se tem CNPJ válido mas está sem nome
-            if cnpj and (not nome or len(nome) < 2):
+            if len(cnpj) == 14 and len(nome) < 2:
                 nome_base = BaseConhecimentoNomes.buscar_nome_por_cnpj(cnpj)
                 if nome_base:
                     nf[chave_nome] = nome_base
@@ -98,8 +111,7 @@ class SiproquimProcessor:
         # --- VERIFICAÇÃO 1: CPF NO LUGAR DE CNPJ (Caso Leonardo/Thalita) ---
         # O SIPROQUIM exige CNPJ (14 dígitos). Se for CPF (11 dígitos), o humano precisa decidir.
         for chave, tipo_pessoa in [('contratante_cnpj', 'Contratante'), ('destinatario_cnpj', 'Destinatário')]:
-            doc_raw = str(nf.get(chave, ''))
-            doc = ''.join(filter(str.isdigit, doc_raw))
+            doc = self._normalizar_documento(nf.get(chave, ''))
             
             if len(doc) == 11 and validar_cpf(doc):
                 self._log_gui("ACAO_NECESSARIA", f"NF {nf_num}: {tipo_pessoa} é CPF ({doc}) ao invés de CNPJ.")
@@ -113,17 +125,15 @@ class SiproquimProcessor:
         ]
         
         for chave_cnpj, chave_nome, tipo_pessoa in campos_verificar:
-            nome = str(nf.get(chave_nome, '')).strip()
-            cnpj_raw = str(nf.get(chave_cnpj, ''))
-            cnpj = ''.join(filter(str.isdigit, cnpj_raw))
+            nome = self._normalizar_texto(nf.get(chave_nome, ''))
+            cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
             
             if cnpj and (not nome or len(nome) < 2):
                 self._log_gui("ATENCAO", f"NF {nf_num}: CNPJ {cnpj} ({tipo_pessoa}) está SEM NOME (não encontrado na base de conhecimento).")
                 self._log_gui("ATENCAO", f"   -> O registro foi mantido no TXT. Abra o arquivo gerado, procure por '{cnpj}' (ou NF {nf_num}) e preencha o nome da empresa manualmente.")
         
         # --- VERIFICAÇÃO 3: CNPJ EMITENTE INVÁLIDO ---
-        cnpj_emitente_raw = str(nf.get('emitente_cnpj', ''))
-        cnpj_emitente = ''.join(filter(str.isdigit, cnpj_emitente_raw))
+        cnpj_emitente = self._normalizar_documento(nf.get('emitente_cnpj', ''))
         
         if cnpj_emitente:
             if len(cnpj_emitente) != 14:

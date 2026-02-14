@@ -21,12 +21,16 @@ try:
         CNPJ_TAMANHO, CNPJ_VAZIO, RECEBEDOR_NAO_INFORMADO,
         TN_LOCAL_PROPRIO
     )
+    from ..gerador.validators import validar_cpf
 except (ImportError, ValueError):
     # Fallback se importação circular - calcula dinamicamente
     CNPJ_TAMANHO = 14
     CNPJ_VAZIO = "0" * CNPJ_TAMANHO
     RECEBEDOR_NAO_INFORMADO = "NAO INFORMADO"
     TN_LOCAL_PROPRIO = "P"
+
+    def validar_cpf(_: str) -> bool:
+        return False
 
 
 class ExtratorPDF:
@@ -163,7 +167,7 @@ class ExtratorPDF:
         # Mantém CPFs como 11 dígitos - o sanitizer tratará a formatação conforme necessário
         for cpf in cpfs_formatados:
             cpf_limpo = self._limpar_cnpj_cpf(cpf)
-            if len(cpf_limpo) == 11:
+            if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                 cnpjs_formatados.append(cpf_limpo)
         
         # Se não encontrou formatados suficientes, busca sequências de dígitos
@@ -176,8 +180,7 @@ class ExtratorPDF:
                 match_cpf = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', linha)
                 if match_cpf:
                     cpf_limpo = self._limpar_cnpj_cpf(match_cpf.group(1))
-                    if len(cpf_limpo) == 11:
-                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                    if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                         if cpf_limpo not in cnpjs_formatados:
                             cnpjs_formatados.append(cpf_limpo)
                 
@@ -192,8 +195,7 @@ class ExtratorPDF:
                 match_cpf_raw = re.search(r'(?:CNPJ/CPF|CPF)[:\s]*(\d{11})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
                 if match_cpf_raw:
                     cpf_limpo = match_cpf_raw.group(1)
-                    if len(cpf_limpo) == 11:
-                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                    if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                         if cpf_limpo not in cnpjs_formatados:
                             cnpjs_formatados.append(cpf_limpo)
                 
@@ -211,11 +213,12 @@ class ExtratorPDF:
             if len(cnpjs_formatados) < 3:
                 texto_sem_pontuacao = re.sub(r'[^\d\s]', ' ', contexto)
                 # Busca CPF primeiro (11 dígitos)
+                tem_contexto_doc = bool(re.search(r'(CNPJ/CPF|CNPJ|CPF)', contexto, re.IGNORECASE))
+                tem_contexto_fone = bool(re.search(r'(FONE|TELEFONE)', contexto, re.IGNORECASE))
                 cpfs_raw = re.findall(rf'(?:^|\s)(\d{{11}})(?:\s|$)', texto_sem_pontuacao)
-                for cpf in cpfs_raw:
-                    if cpf != "0" * 11:
-                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
-                        if cpf not in cnpjs_formatados:
+                if tem_contexto_doc and not tem_contexto_fone:
+                    for cpf in cpfs_raw:
+                        if validar_cpf(cpf) and cpf not in cnpjs_formatados:
                             cnpjs_formatados.append(cpf)
                 
                 # Busca CNPJ (14 dígitos) mas verifica se não é CPF + telefone

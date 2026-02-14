@@ -42,6 +42,7 @@ from .log_manager import LogManager
 from .progress_manager import ProgressManager
 from .utils import downloads_dir, gerar_nome_arquivo_saida, extrair_ano_padrao, extrair_mes_padrao
 from src.gerador.layout_constants import CNPJ_TAMANHO  # Constante compartilhada
+from src.processador.aprendizado_store import AprendizadoStore
 
 # Configurações Globais de Tema
 ctk.set_appearance_mode(UIConstants.THEME_MODE)
@@ -59,6 +60,8 @@ class App(ctk.CTk):
         self.geometry(UIConstants.WINDOW_SIZE)
         self.resizable(UIConstants.WINDOW_RESIZABLE, UIConstants.WINDOW_RESIZABLE)
         self.minsize(UIConstants.WINDOW_MIN_WIDTH, UIConstants.WINDOW_MIN_HEIGHT)
+        if getattr(UIConstants, "WINDOW_START_MAXIMIZED", False):
+            self.after(50, self._maximizar_janela_inicial)
         
         # Variáveis de controle
         self.pdf_path = StringVar(value="")
@@ -78,6 +81,7 @@ class App(ctk.CTk):
         self._log_manager = None  # Será inicializado após criar a UI
         self._ajustes_por_nf = {}
         self._avisos_gerais = []
+        self._alertas_operacionais = {}
         self._total_registros_extraidos = 0
         self._total_nfs_dedup = 0
         self._ultima_estatistica = {}
@@ -85,6 +89,11 @@ class App(ctk.CTk):
         self._logs_grid_info = None
         self._logs_prev_geom = None
         self._logs_animando = False
+        self._thread_aprendizado = None
+        try:
+            self._aprendizado_store = AprendizadoStore.get_instance()
+        except Exception:
+            self._aprendizado_store = None
         
         self._build_ui()
         
@@ -128,12 +137,34 @@ class App(ctk.CTk):
                 self._log_manager.adicionar_debug(f"Opções no combo: {opcoes_combo}")
             
             self._log_manager.adicionar_info("Aguardando ação do usuário...")
+            resumo_memoria = self._aprendizado_store.resumo_memoria()
+            self._log_manager.adicionar_info(
+                f"Memoria ativa: {resumo_memoria.get('arquivo_db', '')}"
+            )
+            self._log_manager.adicionar_info(
+                "Memoria carregada: "
+                f"{resumo_memoria.get('total_pares', 0)} par(es) aprendidos "
+                f"(ativos={resumo_memoria.get('pares_ativos', 0)}, "
+                f"quarentena={resumo_memoria.get('pares_quarentena', 0)})."
+            )
         except Exception as e:
             # Se houver erro na inicialização dos logs, tenta adicionar de forma segura
             try:
                 self._log_manager.adicionar_erro(f"Erro na inicialização: {str(e)}")
             except:
                 pass  # Se nem isso funcionar, ignora
+
+    def _maximizar_janela_inicial(self) -> None:
+        """Tenta iniciar a janela maximizada (Windows/Linux)."""
+        try:
+            self.state("zoomed")
+            return
+        except Exception:
+            pass
+        try:
+            self.attributes("-zoomed", True)
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         """Constrói toda a interface gráfica."""
@@ -377,6 +408,98 @@ class App(ctk.CTk):
         )
         self.lbl_dica_mes_ano.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
+        # --- Passo 4: Aprendizado de memoria ---
+        self.frame_aprendizado = ctk.CTkFrame(self.frame_formulario, fg_color="transparent")
+        self.frame_aprendizado.grid(
+            row=3, column=0, sticky="ew",
+            pady=(0, 12)
+        )
+        self.frame_aprendizado.columnconfigure(0, weight=1)
+        self.frame_aprendizado.columnconfigure(1, weight=1)
+
+        self.lbl_step4 = ctk.CTkLabel(
+            self.frame_aprendizado,
+            text=UIConstants.TEXT_STEP_4,
+            font=ctk.CTkFont(size=UIConstants.FONT_SIZE_HEADING, weight="bold"),
+            anchor="w"
+        )
+        self.lbl_step4.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        self.frame_aprendizado_acoes = ctk.CTkFrame(self.frame_aprendizado, fg_color="transparent")
+        self.frame_aprendizado_acoes.grid(row=1, column=0, columnspan=2, sticky="w")
+
+        self.btn_aprender_txt = ctk.CTkButton(
+            self.frame_aprendizado_acoes,
+            text=UIConstants.TEXT_BUTTON_APRENDER_TXT,
+            command=self._on_aprender_txt,
+            height=UIConstants.HEIGHT_BUTTON_SMALL,
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_aprender_txt.grid(row=0, column=0, sticky="w")
+
+        self.btn_abrir_memoria = ctk.CTkButton(
+            self.frame_aprendizado_acoes,
+            text=UIConstants.TEXT_BUTTON_ABRIR_MEMORIA,
+            command=self._abrir_pasta_memoria,
+            width=180,
+            height=UIConstants.HEIGHT_BUTTON_SMALL,
+            fg_color=UIConstants.COLOR_SECONDARY,
+            hover_color=UIConstants.COLOR_SECONDARY_HOVER
+        )
+        self.btn_abrir_memoria.grid(
+            row=0,
+            column=1,
+            sticky="w",
+            padx=(UIConstants.PADDING_INTERNAL, 0),
+        )
+
+        self.lbl_dica_aprendizado = ctk.CTkLabel(
+            self.frame_aprendizado,
+            text=UIConstants.TEXT_DICA_APRENDIZADO,
+            font=ctk.CTkFont(size=UIConstants.FONT_SIZE_SMALL),
+            text_color=UIConstants.COLOR_TEXT_HINT,
+            anchor="w",
+            justify="left"
+        )
+        self.lbl_dica_aprendizado.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        try:
+            resumo_memoria = self._aprendizado_store.resumo_memoria()
+            caminho_memoria = resumo_memoria.get("arquivo_db", "")
+        except Exception:
+            caminho_memoria = ""
+
+        self.frame_memoria_info = ctk.CTkFrame(
+            self.frame_aprendizado,
+            fg_color=UIConstants.COLOR_BG_FRAME_LOGS,
+            corner_radius=UIConstants.CORNER_RADIUS_LOGS,
+        )
+        self.frame_memoria_info.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(8, 0),
+        )
+        self.frame_memoria_info.columnconfigure(0, weight=1)
+
+        self.lbl_memoria_path = ctk.CTkLabel(
+            self.frame_memoria_info,
+            text=self._formatar_texto_memoria(caminho_memoria),
+            font=ctk.CTkFont(size=UIConstants.FONT_SIZE_TINY),
+            text_color=UIConstants.COLOR_TEXT_HINT,
+            anchor="w",
+            justify="left",
+            wraplength=700,
+        )
+        self.lbl_memoria_path.grid(row=0, column=0, sticky="ew", padx=10, pady=8)
+
+        if not self._aprendizado_store:
+            self.btn_aprender_txt.configure(state="disabled")
+            self.btn_abrir_memoria.configure(state="disabled")
+            self.lbl_memoria_path.configure(text=self._formatar_texto_memoria(""))
+
         # --- Coluna 2: Logs e Status ---
         self.frame_logs_col = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frame_logs_col.grid(
@@ -486,7 +609,7 @@ class App(ctk.CTk):
             corner_radius=UIConstants.CORNER_RADIUS_FRAME
         )
         self.frame_status.grid(
-            row=3, column=0, sticky="ew",
+            row=4, column=0, sticky="ew",
             pady=(12, 0)
         )
         self.frame_status.columnconfigure(0, weight=1)
@@ -669,6 +792,192 @@ class App(ctk.CTk):
             self.status.set(f"Arquivo selecionado: {Path(path).name}")
             self._verificar_habilitar_botao()
 
+    def _on_aprender_txt(self) -> None:
+        """Seleciona TXT corrigido e inicia aprendizado em thread."""
+        if not self._aprendizado_store:
+            if self._log_manager:
+                self._log_manager.adicionar_erro("Memoria de aprendizado indisponivel no momento.")
+            messagebox.showerror(UIConstants.DIALOG_TITLE_ERRO, "Memoria de aprendizado indisponivel.")
+            return
+
+        if self._is_busy:
+            if self._log_manager:
+                self._log_manager.adicionar_aviso("Aguarde a operacao atual terminar.")
+            return
+
+        caminho_txt = filedialog.askopenfilename(
+            title=UIConstants.DIALOG_TITLE_TXT,
+            filetypes=UIConstants.FILE_TYPES_TXT,
+        )
+        if not caminho_txt:
+            return
+
+        self._set_aprendizado_busy(True)
+        self.status.set("Aprendendo com TXT corrigido...")
+        if self._log_manager:
+            self._log_manager.adicionar_banner("APRENDIZADO", "STATUS")
+            self._log_manager.adicionar_info(f"Arquivo selecionado para aprendizado: {Path(caminho_txt).name}")
+
+        self._thread_aprendizado = threading.Thread(
+            target=self._run_aprendizado_txt,
+            args=(caminho_txt,),
+            daemon=True,
+        )
+        self._thread_aprendizado.start()
+
+    def _run_aprendizado_txt(self, caminho_txt: str) -> None:
+        """Executa aprendizado de TXT em background."""
+        try:
+            if not self._aprendizado_store:
+                raise RuntimeError("Memoria de aprendizado indisponivel.")
+            resultado = self._aprendizado_store.aprender_com_txt(caminho_txt)
+            self.after(0, lambda: self._log_resumo_aprendizado(resultado))
+            replay = bool(resultado.get("replay_detectado", False))
+            self.after(
+                0,
+                lambda: self.status.set(
+                    (
+                        "Aprendizado ignorado: arquivo ja processado anteriormente."
+                        if replay
+                        else (
+                            f"Aprendizado concluido: +{resultado.get('aprendidos_novos', 0)} novos, "
+                            f"{resultado.get('promovidos', 0)} promovidos."
+                        )
+                    )
+                ),
+            )
+            self.after(
+                0,
+                lambda: messagebox.showinfo(
+                    UIConstants.DIALOG_TITLE_SUCESSO,
+                    (
+                        "Aprendizado ignorado: este arquivo ja foi processado.\n\n"
+                        f"Sessao anterior: #{resultado.get('sessao_referencia_id', 'N/A')} "
+                        f"em {resultado.get('sessao_referencia_data', 'N/A')}\n"
+                        f"Arquivo de referencia: {resultado.get('sessao_referencia_arquivo', '')}\n\n"
+                        f"Memoria: {resultado.get('arquivo_db', '')}"
+                        if replay
+                        else (
+                            "Aprendizado concluido com sucesso.\n\n"
+                            f"Novos pares: {resultado.get('aprendidos_novos', 0)}\n"
+                            f"Atualizados: {resultado.get('atualizados', 0)}\n"
+                            f"Promovidos para auto-preenchimento: {resultado.get('promovidos', 0)}\n"
+                            f"Em quarentena nesta sessao: {resultado.get('quarentena_sessao', 0)}\n"
+                            f"Ignorados: {resultado.get('ignorados', 0)}\n\n"
+                            f"Memoria: {resultado.get('arquivo_db', '')}"
+                        )
+                    ),
+                ),
+            )
+        except Exception as exc:
+            erro = f"Falha ao aprender com TXT: {exc}"
+            self.after(0, lambda: self._log_manager.adicionar_erro(erro) if self._log_manager else None)
+            self.after(0, lambda: self.status.set("Falha no aprendizado."))
+            self.after(0, lambda: messagebox.showerror(UIConstants.DIALOG_TITLE_ERRO, erro))
+        finally:
+            self.after(0, lambda: self._set_aprendizado_busy(False))
+
+    @staticmethod
+    def _formatar_texto_memoria(caminho: str) -> str:
+        """Formata texto exibido no card de memoria da UI."""
+        caminho_limpo = str(caminho or "").strip()
+        if not caminho_limpo:
+            return "Memoria ativa (SQLite): indisponivel"
+        return f"Memoria ativa (SQLite):\n{caminho_limpo}"
+
+    def _log_resumo_aprendizado(self, resultado: dict) -> None:
+        """Escreve no log o que foi aprendido para auditoria."""
+        if not self._log_manager:
+            return
+
+        self._log_manager.adicionar(
+            "Resumo do aprendizado: "
+            f"TN={resultado.get('total_tn', 0)} | "
+            f"Candidatos={resultado.get('candidatos', 0)} | "
+            f"Replay={1 if resultado.get('replay_detectado', False) else 0} | "
+            f"Novos={resultado.get('aprendidos_novos', 0)} | "
+            f"Atualizados={resultado.get('atualizados', 0)} | "
+            f"Promovidos={resultado.get('promovidos', 0)} | "
+            f"Rebaixados={resultado.get('rebaixados', 0)} | "
+            f"Quarentena(s)={resultado.get('quarentena_sessao', 0)} | "
+            f"Ignorados={resultado.get('ignorados', 0)} | "
+            f"Linhas invalidas={resultado.get('linhas_invalidas', 0)}",
+            "STATUS",
+        )
+        self._log_manager.adicionar(f"Memoria salva em: {resultado.get('arquivo_db', '')}", "INFO")
+        if resultado.get("replay_detectado", False):
+            self._log_manager.adicionar(
+                "Arquivo ja aprendido anteriormente; contadores da memoria nao foram alterados.",
+                "AVISO",
+            )
+
+        detalhes = resultado.get("detalhes", []) or []
+        if detalhes:
+            self._log_manager.adicionar("O que foi aprendido:", "INFO")
+            limite = 25
+            for item in detalhes[:limite]:
+                self._log_manager.adicionar(item, "INFO")
+            if len(detalhes) > limite:
+                self._log_manager.adicionar(
+                    f"... {len(detalhes) - limite} item(ns) adicionais nao exibidos no log.",
+                    "INFO",
+                )
+
+        try:
+            resumo_memoria = self._aprendizado_store.resumo_memoria()
+            self.lbl_memoria_path.configure(
+                text=self._formatar_texto_memoria(resumo_memoria.get("arquivo_db", ""))
+            )
+            self._log_manager.adicionar(
+                "Totais da memoria: "
+                f"pares={resumo_memoria.get('total_pares', 0)} | "
+                f"ativos={resumo_memoria.get('pares_ativos', 0)} | "
+                f"quarentena={resumo_memoria.get('pares_quarentena', 0)} | "
+                f"nomes={resumo_memoria.get('total_nomes', 0)} | "
+                f"documentos={resumo_memoria.get('total_documentos', 0)}",
+                "INFO",
+            )
+        except Exception:
+            pass
+
+    def _abrir_pasta_memoria(self) -> None:
+        """Abre a pasta local onde o arquivo de memoria SQLite e armazenado."""
+        try:
+            if not self._aprendizado_store:
+                raise RuntimeError("Memoria de aprendizado indisponivel.")
+            pasta = self._aprendizado_store.memory_folder
+            pasta.mkdir(parents=True, exist_ok=True)
+            if self._log_manager:
+                self._log_manager.adicionar_info(f"Abrindo pasta de memoria: {pasta}")
+            try:
+                os.startfile(str(pasta))
+            except Exception:
+                subprocess.run(["explorer", str(pasta)])
+        except Exception as exc:
+            erro = f"Falha ao abrir pasta de memoria: {exc}"
+            if self._log_manager:
+                self._log_manager.adicionar_erro(erro)
+            messagebox.showerror(UIConstants.DIALOG_TITLE_ERRO, erro)
+
+    def _set_aprendizado_busy(self, busy: bool) -> None:
+        """Controla estado de UI durante aprendizado."""
+        self._is_busy = busy
+        if busy:
+            self.btn_aprender_txt.configure(state="disabled", text=UIConstants.TEXT_BUTTON_APRENDENDO_TXT)
+            self.btn_abrir_memoria.configure(state="disabled")
+            self.btn_converter.configure(state="disabled")
+            self.btn_buscar.configure(state="disabled")
+            self.entry_cnpj.configure(state="disabled")
+        else:
+            self.btn_aprender_txt.configure(
+                state="normal" if self._aprendizado_store else "disabled",
+                text=UIConstants.TEXT_BUTTON_APRENDER_TXT
+            )
+            self.btn_abrir_memoria.configure(state="normal" if self._aprendizado_store else "disabled")
+            self.btn_buscar.configure(state="normal")
+            self.entry_cnpj.configure(state="normal")
+            self._verificar_habilitar_botao()
+
     def _on_gerar(self) -> None:
         """Inicia o processamento de conversão do PDF."""
         try:
@@ -681,6 +990,7 @@ class App(ctk.CTk):
             # Reseta ajustes para novo processamento
             self._ajustes_por_nf = {}
             self._avisos_gerais = []
+            self._alertas_operacionais = {}
             self._total_registros_extraidos = 0
             self._total_nfs_dedup = 0
             self._ultima_estatistica = {}
@@ -931,13 +1241,20 @@ class App(ctk.CTk):
 
         tipo = "REVISAO"
         acao = "Verifique e ajuste manualmente no TXT, se necessario."
+        manual = True
 
         if "recebedor suspeito" in texto:
-            tipo = "RECEBEDOR"
-            acao = "Verifique o recebedor e ajuste se necessario."
+            if "substituido por" in texto or "substituido automaticamente" in texto:
+                tipo = "RECEBEDOR AUTOAJUSTADO"
+                acao = "Ajuste automatico aplicado pelo script."
+                manual = False
+            else:
+                tipo = "RECEBEDOR"
+                acao = "Verifique o recebedor e ajuste se necessario."
         elif "contratante" in texto and "igual ao" in texto and "destino" in texto:
             tipo = "REGRA NEGOCIO"
-            acao = "Valide se o SIPROQUIM aceita operacao para o mesmo CNPJ."
+            acao = "Aviso operacional: avalie a regra no SIPROQUIM sem ajuste por NF."
+            manual = False
         elif "cpf" in texto and "ao inves de cnpj" in texto:
             tipo = "CPF DETECTADO"
             acao = "Substitua por um CNPJ valido no TXT."
@@ -966,7 +1283,20 @@ class App(ctk.CTk):
             tipo = "CTE"
             acao = "Verifique os dados do CTe no PDF."
 
-        return {"tipo": tipo, "detalhe": detalhe, "acao": acao}
+        return {"tipo": tipo, "detalhe": detalhe, "acao": acao, "manual": manual}
+
+    def _registrar_alerta_operacional(self, tipo: str, nf: Optional[str], detalhe: str) -> None:
+        """Agrupa alertas nao bloqueantes para reduzir ruido na revisao manual."""
+        tipo_norm = (tipo or "ALERTA").strip()
+        bucket = self._alertas_operacionais.setdefault(
+            tipo_norm,
+            {"nfs": set(), "amostras": []}
+        )
+        if nf and nf not in ("N/A", "NA"):
+            bucket["nfs"].add(str(nf))
+        detalhe = (detalhe or "").strip()
+        if detalhe and detalhe not in bucket["amostras"] and len(bucket["amostras"]) < 3:
+            bucket["amostras"].append(detalhe)
 
     def _normalizar_log_processador(self, tipo: str, mensagem: str) -> Optional[tuple]:
         """Normaliza logs do processador para reduzir ruído e melhorar layout."""
@@ -1018,6 +1348,9 @@ class App(ctk.CTk):
             chave = str(nf)
             msg = self._limpar_prefixo_mensagem(mensagem, chave)
             info = self._classificar_ajuste(msg)
+            if not info.get("manual", True):
+                self._registrar_alerta_operacional(info.get("tipo", "ALERTA"), chave, info.get("detalhe", ""))
+                return
             if info.get("tipo") == "REVISAO" and tipo:
                 info["tipo"] = tipo.replace("_", " ").strip()
             self._ajustes_por_nf.setdefault(chave, [])
@@ -1025,6 +1358,10 @@ class App(ctk.CTk):
                 self._ajustes_por_nf[chave].append(info)
         else:
             msg = self._limpar_prefixo_mensagem(mensagem, None)
+            info = self._classificar_ajuste(msg)
+            if not info.get("manual", True):
+                self._registrar_alerta_operacional(info.get("tipo", "ALERTA"), None, info.get("detalhe", ""))
+                return
             if msg and msg not in self._avisos_gerais:
                 self._avisos_gerais.append(msg)
 
@@ -1034,17 +1371,21 @@ class App(ctk.CTk):
             return
         total_nfs = len(self._ajustes_por_nf)
 
-        if total_nfs == 0:
+        if total_nfs == 0 and not self._alertas_operacionais:
             self._log_manager.adicionar_banner("REVISAO MANUAL", "CHECK")
             self._log_manager.adicionar_sucesso("Nenhum ajuste manual detectado.")
             return
 
-        self._log_manager.adicionar("-" * 80, "SYSTEM")
-        self._log_manager.adicionar(
-            f"REVISAO MANUAL NECESSARIA - {total_nfs} NOTAS COM PENDENCIAS",
-            "AVISO"
-        )
-        self._log_manager.adicionar("-" * 80, "SYSTEM")
+        if total_nfs > 0:
+            self._log_manager.adicionar("-" * 80, "SYSTEM")
+            self._log_manager.adicionar(
+                f"REVISAO MANUAL NECESSARIA - {total_nfs} NOTAS COM PENDENCIAS",
+                "AVISO"
+            )
+            self._log_manager.adicionar("-" * 80, "SYSTEM")
+        else:
+            self._log_manager.adicionar_banner("REVISAO MANUAL", "CHECK")
+            self._log_manager.adicionar_sucesso("Nenhuma pendencia manual por NF.")
 
         if total_nfs > 0:
             def _key_nf(x):
@@ -1076,6 +1417,22 @@ class App(ctk.CTk):
             if linhas:
                 self._log_manager.adicionar("\n".join(linhas), "INFO")
 
+        if self._alertas_operacionais:
+            linhas_alerta = []
+            for tipo, dados in sorted(self._alertas_operacionais.items()):
+                qtd_nfs = len(dados.get("nfs", set()))
+                if qtd_nfs > 0:
+                    linhas_alerta.append(f"{tipo}: {qtd_nfs} NF(s) com aviso nao bloqueante.")
+                else:
+                    linhas_alerta.append(f"{tipo}: aviso nao bloqueante.")
+                amostras = dados.get("amostras", [])
+                if amostras:
+                    linhas_alerta.append(f"Exemplo: {amostras[0]}")
+            if linhas_alerta:
+                self._log_manager.adicionar("-" * 80, "SYSTEM")
+                self._log_manager.adicionar("ALERTAS OPERACIONAIS (NAO VIRAM PENDENCIA MANUAL):", "INFO")
+                self._log_manager.adicionar("\n".join(linhas_alerta), "INFO")
+
     def _log_relatorio_final(self) -> None:
         """Exibe o relatorio final com os principais indicadores."""
         if not self._log_manager:
@@ -1088,7 +1445,10 @@ class App(ctk.CTk):
         total_corrigidos = stats.get('total_corrigidos', 0)
         total_com_erros = stats.get('total_com_erros', 0)
         total_criticos = stats.get('total_com_erros_criticos', 0)
-        total_ajustes = stats.get('total_ajustes_manuais', 0)
+        total_ajustes = max(
+            stats.get('total_ajustes_manuais', 0),
+            len(self._ajustes_por_nf)
+        )
 
         if total_criticos > 0:
             status_final = "FALHA (Erros criticos)"
@@ -1220,10 +1580,16 @@ class App(ctk.CTk):
             )
             self.after(0, self._log_resumo_analista)
             self.after(0, self._log_relatorio_final)
-            self.after(0, lambda: self._log_manager.adicionar("Processamento concluido com sucesso!", "SUCESSO"))
+            total_criticos = self._ultima_estatistica.get('total_com_erros_criticos', 0)
+            if total_criticos > 0:
+                self.after(0, lambda: self._log_manager.adicionar(
+                    "Processamento concluido com pendencias criticas.", "AVISO"
+                ))
+            else:
+                self.after(0, lambda: self._log_manager.adicionar("Processamento concluido com sucesso!", "SUCESSO"))
             self.after(0, lambda: self._log_manager.adicionar(f"ARQUIVO GERADO: {caminho_final}", "EXPORT"))
             self.after(0, lambda: self._log_manager.adicionar("=" * 60, "SYSTEM"))
-            self.after(0, lambda: self._on_sucesso(caminho_final))
+            self.after(0, lambda: self._on_sucesso(caminho_final, tem_criticos=(total_criticos > 0)))
 
         except FileNotFoundError as e:
             erro_msg = f"Arquivo nao encontrado: {str(e)}"
@@ -1282,22 +1648,35 @@ class App(ctk.CTk):
         else:
             self.status.set(acao)
 
-    def _on_sucesso(self, caminho: str) -> None:
-        """Callback chamado quando conversão é concluída com sucesso."""
+    def _on_sucesso(self, caminho: str, tem_criticos: bool = False) -> None:
+        """Callback chamado quando a conversão é concluída."""
         self._set_busy(False)
         
         # Calcula tempo total usando ProgressManager
         tempo_total = self._progress_manager.obter_tempo_decorrido()
         if tempo_total is not None:
             tempo_str = self._progress_manager.formatar_tempo(tempo_total)
-            self.status.set(f"✅ Conversão concluída em {tempo_str}!")
+            if tem_criticos:
+                self.status.set(f"Processamento finalizado em {tempo_str} com pendências críticas.")
+            else:
+                self.status.set(f"✅ Conversão concluída em {tempo_str}!")
             self.lbl_tempo.configure(text=f"Tempo total: {tempo_str}")
         else:
-            self.status.set(UIConstants.TEXT_SUCESSO_CONVERSAO)
+            if tem_criticos:
+                self.status.set("Processamento finalizado com pendências críticas.")
+            else:
+                self.status.set(UIConstants.TEXT_SUCESSO_CONVERSAO)
         
         self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO)
 
         caminho_abs = Path(caminho).absolute()
+        if tem_criticos:
+            messagebox.showwarning(
+                UIConstants.DIALOG_TITLE_AVISO,
+                "Arquivo gerado com pendências críticas.\n"
+                "Revise os itens do log antes de enviar ao SIPROQUIM.\n\n"
+                f"{UIConstants.TEXT_SUCESSO_ARQUIVO_SALVO}\n{caminho_abs}"
+            )
         msg = f"{UIConstants.TEXT_SUCESSO_ARQUIVO_SALVO}\n{caminho_abs}\n\n{UIConstants.TEXT_SUCESSO_ABRIR_DOWNLOADS}"
         
         if messagebox.askyesno(UIConstants.DIALOG_TITLE_SUCESSO, msg):
@@ -1324,6 +1703,10 @@ class App(ctk.CTk):
             self.btn_converter.configure(state="disabled", text=UIConstants.TEXT_BUTTON_PROCESSANDO)
             self.btn_buscar.configure(state="disabled")
             self.entry_cnpj.configure(state="disabled")
+            if hasattr(self, "btn_aprender_txt") and self.btn_aprender_txt:
+                self.btn_aprender_txt.configure(state="disabled")
+            if hasattr(self, "btn_abrir_memoria") and self.btn_abrir_memoria:
+                self.btn_abrir_memoria.configure(state="disabled")
             self.progress_bar.configure(mode="determinate")
             self.progress_bar.set(UIConstants.PROGRESSO_INICIAL)
             self._progress_manager.iniciar()
@@ -1333,6 +1716,13 @@ class App(ctk.CTk):
             self.btn_converter.configure(state="normal", text=UIConstants.TEXT_BUTTON_CONVERTER)
             self.btn_buscar.configure(state="normal")
             self.entry_cnpj.configure(state="normal")
+            if hasattr(self, "btn_aprender_txt") and self.btn_aprender_txt:
+                if self._aprendizado_store:
+                    self.btn_aprender_txt.configure(state="normal", text=UIConstants.TEXT_BUTTON_APRENDER_TXT)
+                else:
+                    self.btn_aprender_txt.configure(state="disabled", text=UIConstants.TEXT_BUTTON_APRENDER_TXT)
+            if hasattr(self, "btn_abrir_memoria") and self.btn_abrir_memoria:
+                self.btn_abrir_memoria.configure(state="normal" if self._aprendizado_store else "disabled")
             self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO)
             self._progress_manager.finalizar()
             self._verificar_habilitar_botao()

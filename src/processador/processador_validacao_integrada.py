@@ -3,7 +3,10 @@ Processador com validação integrada e robusta.
 Substitui o SiproquimProcessor com validação preventiva completa.
 """
 
+from collections import Counter, defaultdict
+import re
 from typing import List, Dict, Optional, Callable
+import unicodedata
 from .validador_campos import ValidadorCampos, ErroValidacao
 from .validador_estrutura_pdf import ValidadorEstruturaPDF
 from .validacao_constants import ConfigValidacao
@@ -58,6 +61,7 @@ class ProcessadorValidacaoIntegrada:
         
         # Cache de erros por NF
         self.erros_por_nf: Dict[str, List[ErroValidacao]] = {}
+        self._indice_docs_por_nome: Dict[str, Dict[str, Counter]] = {}
     
     def _log_gui(self, tipo: str, mensagem: str):
         """Envia mensagem para o log da tela preta ou GUI."""
@@ -66,6 +70,94 @@ class ProcessadorValidacaoIntegrada:
             self.log(msg_formatada)
         else:
             print(msg_formatada)
+
+    @staticmethod
+    def _normalizar_texto(valor: object) -> str:
+        """Normaliza campos textuais para evitar tratar 'None' como nome valido."""
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.upper() in {"NONE", "NULL", "N/A", "NA", "NAN"}:
+            return ""
+        return texto
+
+    @staticmethod
+    def _normalizar_documento(valor: object) -> str:
+        """Extrai apenas digitos de um campo de documento."""
+        texto = ProcessadorValidacaoIntegrada._normalizar_texto(valor)
+        return ''.join(filter(str.isdigit, texto))
+
+    @staticmethod
+    def _normalizar_nome_chave(valor: object) -> str:
+        """Normaliza nome para comparacoes robustas por chave."""
+        texto = ProcessadorValidacaoIntegrada._normalizar_texto(valor)
+        if not texto:
+            return ""
+        texto = unicodedata.normalize("NFD", texto.upper())
+        texto = ''.join(ch for ch in texto if unicodedata.category(ch) != "Mn")
+        texto = re.sub(r"[^A-Z0-9]+", " ", texto)
+        return re.sub(r"\s+", " ", texto).strip()
+
+    def _construir_indice_documentos(self, registros: List[Dict]) -> None:
+        """Monta indice nome -> CNPJ valido observado no proprio lote."""
+        indices: Dict[str, Dict[str, Counter]] = {
+            "emitente_cnpj": defaultdict(Counter),
+            "contratante_cnpj": defaultdict(Counter),
+            "destinatario_cnpj": defaultdict(Counter),
+        }
+
+        campos = [
+            ("emitente_cnpj", "emitente_nome"),
+            ("contratante_cnpj", "contratante_nome"),
+            ("destinatario_cnpj", "destinatario_nome"),
+        ]
+
+        for registro in registros:
+            for chave_doc, chave_nome in campos:
+                doc = self._normalizar_documento(registro.get(chave_doc, ""))
+                nome = self._normalizar_nome_chave(registro.get(chave_nome, ""))
+                if len(doc) == 14 and doc != ("0" * 14) and len(nome) >= 8:
+                    indices[chave_doc][nome][doc] += 1
+
+        self._indice_docs_por_nome = indices
+
+    def _buscar_documento_por_nome(self, chave_doc: str, nome: str) -> Optional[str]:
+        """
+        Busca CNPJ por nome com prioridade:
+        1) match exato no lote
+        2) match aproximado unico no lote
+        3) base de conhecimento (com contexto de campo)
+        """
+        nome_chave = self._normalizar_nome_chave(nome)
+        if len(nome_chave) < 8:
+            return None
+
+        indice = self._indice_docs_por_nome.get(chave_doc, {})
+        docs_exatos = indice.get(nome_chave)
+        if docs_exatos and len(docs_exatos) == 1:
+            return next(iter(docs_exatos.keys()))
+
+        candidatos = set()
+        if len(nome_chave) >= 12:
+            for nome_idx, docs in indice.items():
+                menor, maior = (nome_chave, nome_idx) if len(nome_chave) <= len(nome_idx) else (nome_idx, nome_chave)
+                if menor in maior:
+                    candidatos.update(docs.keys())
+                    if len(candidatos) > 1:
+                        break
+        if len(candidatos) == 1:
+            return next(iter(candidatos))
+
+        campo_aprendizado = {
+            "emitente_cnpj": "emitente",
+            "contratante_cnpj": "contratante",
+            "destinatario_cnpj": "destinatario",
+        }.get(chave_doc)
+
+        return BaseConhecimentoNomes.buscar_cnpj_por_nome(
+            nome_chave,
+            campo=campo_aprendizado
+        )
 
     def _emitir_ajuste(self, nf_num: str, tipo: str, mensagem: str):
         """Emite evento estruturado de ajuste manual para a GUI."""
@@ -126,6 +218,8 @@ class ProcessadorValidacaoIntegrada:
         self._log_gui("INFO", f"Processando {len(nfs_extraidas)} registros com VALIDAÇÃO ROBUSTA...")
         self._log_gui("INFO", "Sistema de Validação: CHECKSUM + FORMATO + INTEGRIDADE")
         
+        self._construir_indice_documentos(nfs_extraidas)
+
         for idx, nf in enumerate(nfs_extraidas, 1):
             nf_num = nf.get('nf_numero', f'REG_{idx}')
             
@@ -166,7 +260,7 @@ class ProcessadorValidacaoIntegrada:
     
     def _tentar_corrigir_dados(self, nf: Dict) -> bool:
         """
-        Tenta preencher nomes vazios usando a base de conhecimento.
+        Tenta preencher documentos e nomes usando índice interno e base de conhecimento.
         
         Args:
             nf: Registro a corrigir
@@ -182,12 +276,24 @@ class ProcessadorValidacaoIntegrada:
         ]
 
         for chave_cnpj, chave_nome, tipo_pessoa in campos:
-            cnpj_raw = str(nf.get(chave_cnpj, ''))
-            cnpj = ''.join(filter(str.isdigit, cnpj_raw))
-            nome = str(nf.get(chave_nome, '')).strip()
+            cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
+            nome = self._normalizar_texto(nf.get(chave_nome, ''))
+
+            # Se o documento estiver ausente, tenta inferir pelo nome.
+            if (not cnpj or cnpj == ("0" * 14)) and len(nome) >= 8:
+                doc_inferido = self._buscar_documento_por_nome(chave_cnpj, nome)
+                if doc_inferido:
+                    nf[chave_cnpj] = doc_inferido
+                    cnpj = doc_inferido
+                    corrigiu = True
+                    nf_num = nf.get('nf_numero', 'N/A')
+                    self._log_gui(
+                        "SUCESSO",
+                        f"NF {nf_num}: Documento inferido por nome ({tipo_pessoa}) -> {doc_inferido}"
+                    )
 
             # Se tem CNPJ válido mas está sem nome
-            if cnpj and (not nome or len(nome) < 2):
+            if len(cnpj) == 14 and len(nome) < 2:
                 nome_base = BaseConhecimentoNomes.buscar_nome_por_cnpj(cnpj)
                 if nome_base:
                     nf[chave_nome] = nome_base
@@ -212,8 +318,7 @@ class ProcessadorValidacaoIntegrada:
         # --- VERIFICAÇÃO 1: CPF NO LUGAR DE CNPJ (Caso Leonardo/Thalita) ---
         for chave, tipo_pessoa in [('contratante_cnpj', 'Contratante'), 
                                     ('destinatario_cnpj', 'Destinatário')]:
-            doc_raw = str(nf.get(chave, ''))
-            doc = ''.join(filter(str.isdigit, doc_raw))
+            doc = self._normalizar_documento(nf.get(chave, ''))
             
             if len(doc) == 11 and validar_cpf(doc):
                 registrar_ajuste()
@@ -233,9 +338,8 @@ class ProcessadorValidacaoIntegrada:
         ]
         
         for chave_cnpj, chave_nome, tipo_pessoa in campos_verificar:
-            nome = str(nf.get(chave_nome, '')).strip()
-            cnpj_raw = str(nf.get(chave_cnpj, ''))
-            cnpj = ''.join(filter(str.isdigit, cnpj_raw))
+            nome = self._normalizar_texto(nf.get(chave_nome, ''))
+            cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
             
             if cnpj and (not nome or len(nome) < 2):
                 registrar_ajuste()
@@ -249,8 +353,7 @@ class ProcessadorValidacaoIntegrada:
                               f"procure por '{cnpj}' (ou NF {nf_num}) e preencha o nome manualmente.")
         
         # --- VERIFICAÇÃO 3: CNPJ EMITENTE INVÁLIDO ---
-        cnpj_emitente_raw = str(nf.get('emitente_cnpj', ''))
-        cnpj_emitente = ''.join(filter(str.isdigit, cnpj_emitente_raw))
+        cnpj_emitente = self._normalizar_documento(nf.get('emitente_cnpj', ''))
         
         if cnpj_emitente:
             if len(cnpj_emitente) == 11 and validar_cpf(cnpj_emitente):

@@ -3,16 +3,24 @@ Módulo responsável pela extração de campos específicos de textos.
 Contém funções utilitárias para extrair CNPJ, nomes, datas, etc.
 """
 
+import itertools
 import re
 from typing import Optional
 
 # Importa constantes compartilhadas
 try:
     from ..gerador.layout_constants import CNPJ_TAMANHO, CNPJ_VAZIO
+    from ..gerador.validators import validar_cnpj, validar_cpf
 except (ImportError, ValueError):
     # Fallback se importação circular - calcula dinamicamente
     CNPJ_TAMANHO = 14
     CNPJ_VAZIO = "0" * CNPJ_TAMANHO
+
+    def validar_cnpj(_: str) -> bool:
+        return False
+
+    def validar_cpf(_: str) -> bool:
+        return False
 
 
 def limpar_cnpj_cpf(texto: str) -> str:
@@ -28,6 +36,115 @@ def limpar_cnpj_cpf(texto: str) -> str:
     if not texto:
         return ""
     return re.sub(r'[^\d]', '', str(texto))
+
+
+_MAPA_OCR_DIGITOS = str.maketrans({
+    "O": "0",
+    "Q": "0",
+    "D": "0",
+    "I": "1",
+    "L": "1",
+    "|": "1",
+    "!": "1",
+    "Z": "2",
+    "S": "5",
+    "B": "8",
+    "G": "6",
+    "T": "7",
+})
+
+
+def _subsequencias(valor: str, tamanho: int, limite: int) -> list[str]:
+    """Gera subsequencias em ordem, com limite para evitar explosao combinatoria."""
+    if len(valor) < tamanho:
+        return []
+    if len(valor) == tamanho:
+        return [valor]
+
+    resultado = []
+    for idxs in itertools.combinations(range(len(valor)), tamanho):
+        resultado.append(''.join(valor[i] for i in idxs))
+        if len(resultado) >= limite:
+            break
+    return resultado
+
+
+def _extrair_cnpj_ocr_ruidoso(texto: str) -> Optional[str]:
+    """
+    Tenta recuperar CNPJ em texto com OCR ruidoso.
+
+    Regra de seguranca: so retorna quando houver exatamente um candidato valido.
+    """
+    if not texto:
+        return None
+
+    texto_norm = str(texto).upper().translate(_MAPA_OCR_DIGITOS)
+
+    # Mantem delimitadores visuais entre "palavras" para evitar colar CNPJ com telefone.
+    texto_filtrado = ''.join(
+        ch if (ch.isdigit() or ch in './-') else ' '
+        for ch in texto_norm
+    )
+    texto_filtrado = re.sub(r'\s+', ' ', texto_filtrado).strip()
+    if not texto_filtrado:
+        return None
+
+    candidatos_validos = set()
+    padrao_token = re.compile(r'^(\d{2,8})\.(\d{3,8})\.(\d{3,8})/(\d{4,8})-(\d{2,8})$')
+
+    tokens = texto_filtrado.split(' ')
+    for idx, token in enumerate(tokens):
+        candidatos_token = [token]
+        # OCR comum: primeiro bloco separado, ex. "201 .512.682/0001-91".
+        if token.startswith('.') and idx > 0 and tokens[idx - 1].isdigit():
+            candidatos_token.append(tokens[idx - 1] + token)
+
+        for token_candidato in candidatos_token:
+            if token_candidato.count('.') < 2 or '/' not in token_candidato or '-' not in token_candidato:
+                continue
+
+            # Normaliza espacos ao redor de separadores.
+            token_candidato = re.sub(r'\s*([./-])\s*', r'\1', token_candidato).strip(".,;:")
+            match_token = padrao_token.match(token_candidato)
+            if not match_token:
+                continue
+
+            grupo1, grupo2, grupo3, grupo4, grupo5 = match_token.groups()
+            if len(grupo1) < 2 or len(grupo2) < 3 or len(grupo3) < 3 or len(grupo4) < 4 or len(grupo5) < 2:
+                continue
+
+            partes1 = _subsequencias(grupo1, 2, limite=28)
+            partes2 = _subsequencias(grupo2, 3, limite=56)
+            partes3 = _subsequencias(grupo3, 3, limite=56)
+            partes4 = _subsequencias(grupo4, 4, limite=70)
+            partes5 = _subsequencias(grupo5, 2, limite=28)
+
+            tentativas = 0
+            for p1 in partes1:
+                for p2 in partes2:
+                    for p3 in partes3:
+                        for p4 in partes4:
+                            for p5 in partes5:
+                                tentativas += 1
+                                candidato = f"{p1}{p2}{p3}{p4}{p5}"
+                                if validar_cnpj(candidato):
+                                    candidatos_validos.add(candidato)
+                                if tentativas >= 45000:
+                                    break
+                            if tentativas >= 45000:
+                                break
+                        if tentativas >= 45000:
+                            break
+                    if tentativas >= 45000:
+                        break
+                if tentativas >= 45000:
+                    break
+            if tentativas >= 45000:
+                break
+
+    if len(candidatos_validos) == 1:
+        return next(iter(candidatos_validos))
+    return None
 
 
 def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
@@ -54,8 +171,7 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
     match_cpf = re.search(r'CNPJ/CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})(?:\s|$|[^\d])', texto, re.IGNORECASE)
     if match_cpf:
         cpf_limpo = limpar_cnpj_cpf(match_cpf.group(1))
-        if len(cpf_limpo) == 11:  # CPF tem 11 dígitos
-            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+        if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
             return cpf_limpo
     
     # Busca CNPJ formatado (14 dígitos: XX.XXX.XXX/XXXX-XX)
@@ -71,8 +187,8 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
         cnpj_limpo = limpar_cnpj_cpf(match.group(1))
         # Aceita CPF (11 dígitos) ou CNPJ (14 dígitos)
         if len(cnpj_limpo) == 11:
-            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
-            return cnpj_limpo
+            if validar_cpf(cnpj_limpo):
+                return cnpj_limpo
         elif len(cnpj_limpo) == CNPJ_TAMANHO:
             return cnpj_limpo
     
@@ -90,8 +206,8 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
         if match:
             cnpj_limpo = limpar_cnpj_cpf(match.group(0))
             if len(cnpj_limpo) == 11:
-                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
-                return cnpj_limpo
+                if validar_cpf(cnpj_limpo):
+                    return cnpj_limpo
             elif len(cnpj_limpo) == CNPJ_TAMANHO:
                 return cnpj_limpo
     
@@ -108,8 +224,7 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
         match_cpf_linha = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', linha)
         if match_cpf_linha:
             cpf_limpo = limpar_cnpj_cpf(match_cpf_linha.group(1))
-            if len(cpf_limpo) == 11:
-                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+            if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                 return cpf_limpo
         
         # Busca CNPJ formatado na linha (XX.XXX.XXX/XXXX-XX)
@@ -124,8 +239,7 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
         match_cpf_raw = re.search(r'(?:CNPJ/CPF|CPF)[:\s]*(\d{11})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
         if match_cpf_raw:
             cpf_limpo = match_cpf_raw.group(1)
-            if len(cpf_limpo) == 11:
-                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+            if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                 return cpf_limpo
         
         # Busca CNPJ não formatado (14 dígitos) mas para antes de telefone
@@ -140,26 +254,30 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
     texto_sem_pontuacao = re.sub(r'[^\d\s]', ' ', texto)
     
     # Busca CPF primeiro (11 dígitos) - mais comum que CNPJ
+    # Só aceita quando houver contexto de documento e não de telefone.
+    tem_contexto_doc = bool(re.search(r'(CNPJ/CPF|CNPJ|CPF)', texto, re.IGNORECASE))
+    tem_contexto_fone = bool(re.search(r'(FONE|TELEFONE)', texto, re.IGNORECASE))
     match_cpf = re.search(r'(?:^|\s)(\d{11})(?:\s|$)', texto_sem_pontuacao)
     if match_cpf:
         cpf_candidato = match_cpf.group(1)
-        # Validação: não pode ser tudo zeros
-        if cpf_candidato != "0" * 11:
-            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+        if tem_contexto_doc and not tem_contexto_fone and validar_cpf(cpf_candidato):
             return cpf_candidato
     
-    # Busca CNPJ (14 dígitos) - mas verifica se não é CPF + telefone
-    match_cnpj = re.search(r'(?:^|\s)(\d{14})(?:\s|$)', texto_sem_pontuacao)
-    if match_cnpj:
-        cnpj_candidato = match_cnpj.group(1)
-        # Validação: não pode ser tudo zeros ou começar com 00
-        # Verifica se não é CPF (11 dígitos) + telefone (3 dígitos)
-        # Se os primeiros 11 dígitos parecem um CPF válido e os últimos 3 são início de telefone, ignora
-        if (cnpj_candidato != CNPJ_VAZIO and 
-            not cnpj_candidato.startswith('00') and
-            not (len(cnpj_candidato) == 14 and cnpj_candidato[:11] != "0" * 11 and 
-                 cnpj_candidato[11:14].startswith(('14', '15', '16', '17', '18', '19')))):
-            return cnpj_candidato
+    # Busca CNPJ (14 dígitos) - prioriza candidatos válidos por checksum
+    candidatos_cnpj = re.findall(r'(?:^|\s)(\d{14})(?:\s|$)', texto_sem_pontuacao)
+    cnpjs_filtrados = []
+    for candidato in candidatos_cnpj:
+        # Validação básica: não pode ser tudo zeros ou começar com 00
+        if (candidato != CNPJ_VAZIO and
+            not candidato.startswith('00') and
+            not (len(candidato) == 14 and candidato[:11] != "0" * 11 and
+                 candidato[11:14].startswith(('14', '15', '16', '17', '18', '19')))):
+            cnpjs_filtrados.append(candidato)
+    for candidato in cnpjs_filtrados:
+        if validar_cnpj(candidato):
+            return candidato
+    if cnpjs_filtrados:
+        return cnpjs_filtrados[0]
     
     # Estratégia 5: Busca sequências de CNPJ_TAMANHO dígitos próximas a palavras-chave
     # Para casos extremos onde o CNPJ está quebrado
@@ -171,7 +289,12 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
             # Validação básica: não pode ser tudo zeros ou começar com 000 (provavelmente CPF)
             if cnpj_candidato != CNPJ_VAZIO and not cnpj_candidato.startswith('000'):
                 return cnpj_candidato
-    
+
+    # Estratégia 6: OCR ruidoso (só retorna quando há candidato único válido).
+    cnpj_ocr = _extrair_cnpj_ocr_ruidoso(texto)
+    if cnpj_ocr:
+        return cnpj_ocr
+
     return None
 
 
@@ -193,74 +316,63 @@ def extrair_nome_do_texto(texto: str) -> Optional[str]:
     """
     if not texto:
         return None
-    
-    # Divide por quebras de linha (mantém estrutura original antes de achatar)
+
+    def linha_e_metadado(linha: str) -> bool:
+        linha_upper = linha.upper().strip()
+        if not linha_upper:
+            return True
+
+        # Campos técnicos/documentais.
+        if re.search(r'\b(CNPJ/CPF|CNPJ|CPF|FONE|TELEFONE|CEP|CT-?E|RECEBEDOR)\b', linha_upper):
+            return True
+        if re.search(r'^\s*N[º°]?\s*CT', linha_upper):
+            return True
+        if re.search(r'^\s*DATA\b', linha_upper):
+            return True
+
+        # Campos de endereço: usa fronteira de palavra para evitar falsos positivos
+        # em nomes como "PROMOTORA DE VENDAS" / "CIDADE IMPERIAL".
+        if re.search(r'^\s*(END|ENDERECO|LOGRADOURO|RUA|AV\.?|AVENIDA|ROD\.?|RODOVIA|BAIRRO|CIDADE|UF)\b', linha_upper):
+            return True
+
+        # Datas isoladas / linhas numéricas.
+        if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', linha_upper):
+            return True
+        if re.match(r'^\d+$', linha_upper):
+            return True
+
+        return False
+
     linhas = str(texto).split('\n')
-    
     for linha in linhas:
         linha = linha.strip()
         if not linha:
             continue
-        
-        # Remove rótulos como "EMITENTE", "DESTINATÁRIO", etc.
-        linha = re.sub(r'^(EMITENTE|DESTINATÁRIO|CONTRANTE|CONTRATANTE)\s*', '', linha, flags=re.IGNORECASE)
-        linha = linha.strip()
-        
-        if not linha:
+
+        # Remove rótulos do início da linha, preservando o conteúdo real.
+        linha = re.sub(
+            r'^\s*(EMITENTE|DESTINAT[ÁA]RIO|CONTRANTE|CONTRATANTE)\s*:?\s*',
+            '',
+            linha,
+            flags=re.IGNORECASE
+        ).strip()
+        if not linha or linha_e_metadado(linha):
             continue
-        
-        # IGNORA linhas que claramente NÃO são o nome da empresa:
-        # - Contém CNPJ/CPF
-        # - Contém telefone (FONE)
-        # - Contém endereço (END, ROD., RUA, AV., etc.)
-        # - Contém CEP
-        # - Contém cidade
-        # - É uma data
-        # - É só números
-        
-        if ('CNPJ/CPF' in linha.upper() or 
-            'CPF:' in linha.upper() or
-            'FONE' in linha.upper() or 
-            'END' in linha.upper() or
-            'ROD.' in linha.upper() or
-            'RUA' in linha.upper() or
-            'AV.' in linha.upper() or
-            'AVENIDA' in linha.upper() or
-            'CEP' in linha.upper() or
-            'CIDADE' in linha.upper() or
-            'CT-E' in linha.upper() or
-            'CTE' in linha.upper() or
-            'Nº CT' in linha.upper() or
-            'DATA' in linha.upper() or
-            'RECEBEDOR' in linha.upper() or
-            re.match(r'^\d{1,2}/\d{1,2}/\d{4}', linha) or  # É data
-            re.match(r'^\d+$', linha) or  # É só número
-            re.search(r'\d{2}\.\d{3}\.\d{3}', linha)):  # Contém padrão de CNPJ
-            continue
-        
-        # REMOVE "LIXO" que pode ter vindo junto:
-        # 1. Remove CNPJ parcial se estiver no final (ex: "EMPRESA X 92.660.406/")
-        nome_limpo = re.split(r'\d{2}\.\d{3}\.\d{3}', linha)[0]  # Corta antes de CNPJ
-        nome_limpo = re.split(r'CNPJ', nome_limpo, flags=re.IGNORECASE)[0]  # Corta antes de "CNPJ"
-        nome_limpo = re.split(r'CPF', nome_limpo, flags=re.IGNORECASE)[0]  # Corta antes de "CPF"
-        
-        # 2. Remove QUALQUER coisa após pipe (|), incluindo texto e números
-        # Exemplos: "| SAO PAULO", "| CAJAMAR", "| 0076-36", "| 0042-97"
+
+        nome_limpo = linha
+        # Corta o trecho quando começa conteúdo técnico.
+        nome_limpo = re.split(r'\b(?:CNPJ/CPF|CNPJ|CPF|FONE|TELEFONE|CEP)\b', nome_limpo, flags=re.IGNORECASE)[0]
+        # Remove sufixos comuns de tabela/cidade após pipe.
         nome_limpo = re.sub(r'\s*\|\s*.*$', '', nome_limpo)
-        
-        # 3. Remove códigos numéricos no final (ex: "0007-04" ou "0076-36")
+        # Remove códigos numéricos no final (ex.: 0076-36, 0042-97).
         nome_limpo = re.sub(r'\s+\d{4}-\d{2}.*$', '', nome_limpo)
-        
-        # 4. Remove qualquer sequência de números no final
+        # Remove número puro residual no fim.
         nome_limpo = re.sub(r'\s+\d+$', '', nome_limpo)
-        
-        # 5. Remove espaços múltiplos
-        nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip()
-        
-        # 6. Valida: deve ter pelo menos 3 caracteres e não ser só números/pontuação
+        nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip(" -|")
+
         if nome_limpo and len(nome_limpo) >= 3 and not re.match(r'^[\d\s\.\-/]+$', nome_limpo):
             return nome_limpo
-    
+
     return None
 
 

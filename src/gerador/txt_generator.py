@@ -55,6 +55,96 @@ class GeradorTXT:
                 'tipo': tipo,
                 'mensagem': mensagem
             })
+
+    def _ajustar_e_validar_linha_posicional(
+        self,
+        linha: str,
+        numero_linha: int,
+        callback_progresso=None
+    ) -> str:
+        """
+        Garante integridade posicional final de uma linha EM/TN/CC.
+        """
+        if not linha:
+            return linha
+
+        tipo = linha[:2]
+        tamanhos = {
+            EM_TIPO: EM_TAMANHO_TOTAL,
+            TN_TIPO: TN_TAMANHO_TOTAL,
+            CC_TIPO: CC_TAMANHO_TOTAL,
+        }
+        tamanho_esperado = tamanhos.get(tipo)
+        if not tamanho_esperado:
+            return linha
+
+        linha_ajustada = linha
+
+        # Caso real observado: CC com 104 chars e modal deslocado (" RO" no final).
+        if (
+            tipo == CC_TIPO and
+            len(linha_ajustada) == CC_TAMANHO_TOTAL + 1 and
+            linha_ajustada[101] == ' ' and
+            linha_ajustada[102:104] in {"RO", "AQ", "FE", "AE"}
+        ):
+            linha_ajustada = linha_ajustada[:101] + linha_ajustada[102:]
+            self._emitir_alerta(
+                f"Linha {numero_linha}: ajuste automatico aplicado em CC (modal deslocado).",
+                callback_progresso,
+                tipo="ATENCAO",
+                nf_num=None
+            )
+
+        # Ajusta valores invalidos de local em TN para default seguro.
+        if tipo == TN_TIPO and len(linha_ajustada) >= TN_TAMANHO_TOTAL:
+            local_retirada = linha_ajustada[274]
+            local_entrega = linha_ajustada[275]
+            if local_retirada not in {"P", "A"}:
+                linha_ajustada = linha_ajustada[:274] + TN_LOCAL_PROPRIO + linha_ajustada[275:]
+            if local_entrega not in {"P", "A"}:
+                linha_ajustada = linha_ajustada[:275] + TN_LOCAL_PROPRIO + linha_ajustada[276:]
+
+        # Garantia final de comprimento.
+        if len(linha_ajustada) < tamanho_esperado:
+            linha_ajustada = linha_ajustada.ljust(tamanho_esperado)
+        elif len(linha_ajustada) > tamanho_esperado:
+            excedente = linha_ajustada[tamanho_esperado:]
+            if excedente.strip() == "":
+                linha_ajustada = linha_ajustada[:tamanho_esperado]
+            else:
+                raise ValueError(
+                    f"Linha {numero_linha} ({tipo}) excede tamanho esperado "
+                    f"({len(linha_ajustada)} > {tamanho_esperado}) com dados deslocados."
+                )
+
+        # Modal de CC nunca pode ficar vazio para o validador externo.
+        if tipo == CC_TIPO:
+            modal = linha_ajustada[101:103]
+            if modal not in {"RO", "AQ", "FE", "AE"}:
+                linha_ajustada = linha_ajustada[:101] + CC_MODAL_RODOVIARIO
+
+        if len(linha_ajustada) != tamanho_esperado:
+            raise ValueError(
+                f"Linha {numero_linha} ({tipo}) invalida apos ajuste: "
+                f"{len(linha_ajustada)} chars (esperado {tamanho_esperado})."
+            )
+
+        return linha_ajustada
+
+    def _validar_layout_final(self, linhas: List[str], callback_progresso=None) -> List[str]:
+        """
+        Valida e normaliza todas as linhas antes de gravar o TXT final.
+        """
+        linhas_validas: List[str] = []
+        for idx, linha in enumerate(linhas, start=1):
+            linhas_validas.append(
+                self._ajustar_e_validar_linha_posicional(
+                    linha=linha,
+                    numero_linha=idx,
+                    callback_progresso=callback_progresso
+                )
+            )
+        return linhas_validas
     
     def gerar_linha_EM(self, mes: int, ano: int) -> str:
         """
@@ -633,6 +723,9 @@ class GeradorTXT:
                 linha_limpa = str(linha).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
                 linha_limpa = re.sub(r'\s+', ' ', linha_limpa).strip()
             linhas_finais.append(linha_limpa)
+
+        # Valida layout posicional final para evitar rejeição no SIPROQUIM.
+        linhas_finais = self._validar_layout_final(linhas_finais, callback_progresso=callback_progresso)
         
         # Escreve o arquivo garantindo que cada linha seja uma linha física separada
         # mas sem quebras de linha DENTRO de cada linha

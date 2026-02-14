@@ -55,6 +55,22 @@ class ValidadorCampos:
         """
         self.fail_fast = fail_fast
         self.erros_encontrados: List[ErroValidacao] = []
+
+    @staticmethod
+    def _normalizar_texto(valor: object) -> str:
+        """Normaliza valores extraidos do PDF para evitar falsos 'None'."""
+        if valor is None:
+            return ""
+        texto = str(valor).strip()
+        if texto.upper() in {"NONE", "NULL", "N/A", "NA", "NAN"}:
+            return ""
+        return texto
+
+    @staticmethod
+    def _normalizar_documento(valor: object) -> str:
+        """Retorna somente digitos de documento com tratamento de valores nulos."""
+        texto = ValidadorCampos._normalizar_texto(valor)
+        return ''.join(filter(str.isdigit, texto))
     
     def validar_registro_completo(self, registro: Dict) -> List[ErroValidacao]:
         """
@@ -126,7 +142,7 @@ class ValidadorCampos:
     
     def _validar_nf_numero(self, registro: Dict) -> Optional[ErroValidacao]:
         """Valida número da Nota Fiscal."""
-        nf_num = str(registro.get('nf_numero', '')).strip()
+        nf_num = self._normalizar_texto(registro.get('nf_numero', ''))
         
         if not nf_num:
             return ErroValidacao(
@@ -161,13 +177,13 @@ class ValidadorCampos:
     
     def _validar_cte_numero(self, registro: Dict) -> Optional[ErroValidacao]:
         """Valida número do CTe."""
-        cte_num = str(registro.get('cte_numero', '')).strip()
+        cte_num = self._normalizar_texto(registro.get('cte_numero', ''))
         
         if not cte_num:
             return ErroValidacao(
                 campo='cte_numero',
                 mensagem=MensagensErro.CTE_NUMERO_VAZIO,
-                severidade='CRITICO'
+                severidade='ERRO'
             )
         
         if not PATTERN_CTE_NUMERO.match(cte_num):
@@ -179,7 +195,7 @@ class ValidadorCampos:
                     max=CTE_NUMERO_MAX_DIGITOS
                 ),
                 valor=cte_num,
-                severidade='CRITICO'
+                severidade='ERRO'
             )
         
         return None
@@ -191,11 +207,15 @@ class ValidadorCampos:
             campo_nome='cte_data',
             msg_vazia=MensagensErro.CTE_DATA_VAZIA,
             msg_formato=MensagensErro.CTE_DATA_FORMATO_INVALIDO,
-            msg_invalida=MensagensErro.CTE_DATA_INVALIDA
+            msg_invalida=MensagensErro.CTE_DATA_INVALIDA,
+            severidade_vazio='ERRO',
+            severidade_formato='ERRO'
         )
     
     def _validar_data_generica(self, data_str: str, campo_nome: str,
-                               msg_vazia: str, msg_formato: str, msg_invalida: str) -> Optional[ErroValidacao]:
+                               msg_vazia: str, msg_formato: str, msg_invalida: str,
+                               severidade_vazio: str = 'CRITICO',
+                               severidade_formato: str = 'CRITICO') -> Optional[ErroValidacao]:
         """
         Validação genérica de data (dd/mm/aaaa).
         
@@ -209,13 +229,13 @@ class ValidadorCampos:
         Returns:
             ErroValidacao ou None se válida
         """
-        data_str = str(data_str).strip()
+        data_str = self._normalizar_texto(data_str)
         
         if not data_str:
             return ErroValidacao(
                 campo=campo_nome,
                 mensagem=msg_vazia,
-                severidade='CRITICO'
+                severidade=severidade_vazio
             )
         
         if not PATTERN_DATA_BR.match(data_str):
@@ -223,7 +243,7 @@ class ValidadorCampos:
                 campo=campo_nome,
                 mensagem=msg_formato.format(valor=data_str),
                 valor=data_str,
-                severidade='CRITICO'
+                severidade=severidade_formato
             )
         
         # Validação adicional: verifica se a data existe no calendário
@@ -271,7 +291,7 @@ class ValidadorCampos:
         Valida CNPJ do Emitente (deve ser 14 dígitos).
         CPF não é aceito neste campo.
         """
-        cnpj = ''.join(filter(str.isdigit, str(cnpj_raw)))
+        cnpj = self._normalizar_documento(cnpj_raw)
         
         if not cnpj:
             return ErroValidacao(
@@ -321,7 +341,7 @@ class ValidadorCampos:
         Returns:
             ErroValidacao ou None se válido
         """
-        cnpj = ''.join(filter(str.isdigit, str(cnpj_raw)))
+        cnpj = self._normalizar_documento(cnpj_raw)
         
         if not cnpj:
             return ErroValidacao(
@@ -398,7 +418,7 @@ class ValidadorCampos:
         Returns:
             ErroValidacao ou None se válido
         """
-        nome = str(nome).strip()
+        nome = self._normalizar_texto(nome)
         
         if not nome:
             return ErroValidacao(
@@ -431,7 +451,7 @@ class ValidadorCampos:
         Returns:
             ErroValidacao ou None se válido
         """
-        recebedor = str(registro.get('recebedor', '')).strip()
+        recebedor = self._normalizar_texto(registro.get('recebedor', ''))
         
         if not recebedor:
             return ErroValidacao(

@@ -1,17 +1,17 @@
 <!-- PORTFOLIO-FEATURED
-title: SIPROQUIM Converter V6 (PDF -> TXT)
+title: SIPROQUIM Converter V3 (PDF -> TXT)
 description: Conversor de PDF para TXT no layout SIPROQUIM/Rodogarcia para a Policia Federal. Extrai NFs e CTes, deduplica e valida formatos/checksums com detecao de mudanca de layout.
 technologies: Python 3.8+, pdfplumber, CustomTkinter, PyInstaller, Pillow
 demo: N/A (Desktop GUI + CLI)
 highlight: true
-image: public/foto1.png
+image: public/foto.png
 -->
 
 <p align="center">
   <img src="public/foto.png" alt="Capa do projeto" width="1200">
 </p>
 
-# SIPROQUIM Converter V2
+# SIPROQUIM Converter V3
 
 Conversor de PDF para TXT no formato SIPROQUIM/Rodogarcia para a Polícia Federal. Extrai dados de Notas Fiscais e CTes de arquivos PDF e gera arquivos TXT formatados conforme o layout exigido pelo sistema SIPROQUIM.
 
@@ -23,7 +23,7 @@ Este projeto foi desenvolvido para automatizar a conversão de documentos PDF co
 
 - **Extração Automática**: Processa PDFs com centenas de páginas, extraindo dados de emitentes, destinatários, contratantes, NFs e CTes
 - **Deduplicação Inteligente**: Remove duplicatas automaticamente por número de NF
-- **Validação Robusta (V6)**: Validação preventiva antes de gerar o TXT: checksum (Módulo 11) em CNPJs/CPFs, formato de NF/CTe/datas, estrutura do PDF (detecta mudança de layout da PF)
+- **Validação Robusta (V3)**: Validação preventiva antes de gerar o TXT: checksum (Módulo 11) em CNPJs/CPFs, formato de NF/CTe/datas, estrutura do PDF (detecta mudança de layout da PF)
 - **Validação de CNPJ/CPF**: Validação rigorosa usando algoritmo oficial (Módulo 11), com suporte para CPFs convertidos e detecção de pessoa física
 - **Interface Gráfica Moderna**: Interface intuitiva construída com CustomTkinter, com logs em tempo real e barra de progresso
 - **Seleção de Filiais**: Sistema de busca e seleção de filiais por CNPJ ou dropdown
@@ -159,7 +159,7 @@ O arquivo TXT gerado segue o layout SIPROQUIM com três tipos de linhas:
 - Responsável Recebimento: 70 chars
 - Modal: "RO" (2 chars)
 
-## Validação Robusta e Logs (V6)
+## Validação Robusta e Logs (V3)
 
 O sistema valida todos os campos **antes** de gerar o TXT e exibe logs detalhados na GUI e no terminal.
 

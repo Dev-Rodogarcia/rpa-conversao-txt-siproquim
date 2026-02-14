@@ -9,6 +9,7 @@ from .processador_validacao_integrada import ProcessadorValidacaoIntegrada
 from .validador_campos import ValidadorCampos, ErroValidacao
 from .validador_estrutura_pdf import ValidadorEstruturaPDF
 from .validacao_constants import ConfigValidacao, MensagensErro
+from .aprendizado_store import AprendizadoStore
 
 __all__ = [
     'SiproquimProcessor',
@@ -19,4 +20,5 @@ __all__ = [
     'ValidadorEstruturaPDF',
     'ConfigValidacao',
     'MensagensErro',
+    'AprendizadoStore',
 ]

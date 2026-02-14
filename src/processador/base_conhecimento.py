@@ -6,7 +6,11 @@ permitindo que o sistema preencha automaticamente campos faltantes
 quando o extrator de PDF falha em identificar o nome da empresa.
 """
 
+import re
+import unicodedata
 from typing import Dict, Optional
+
+from .aprendizado_store import AprendizadoStore
 
 
 class BaseConhecimentoNomes:
@@ -163,6 +167,18 @@ class BaseConhecimentoNomes:
         # excluído desta base, pois é um CPF que será bloqueado pela REGRA DE BLOQUEIO #1
         # (CPF em campo de CNPJ não passa na validação matemática).
     }
+
+    _store_aprendizado: Optional[AprendizadoStore] = None
+
+    @classmethod
+    def _obter_store_aprendizado(cls) -> Optional[AprendizadoStore]:
+        """Obtém store de aprendizado sem interromper o fluxo em caso de falha."""
+        if cls._store_aprendizado is None:
+            try:
+                cls._store_aprendizado = AprendizadoStore.get_instance()
+            except Exception:
+                cls._store_aprendizado = None
+        return cls._store_aprendizado
     
     @classmethod
     def buscar_nome_por_cnpj(cls, cnpj: str) -> Optional[str]:
@@ -179,7 +195,70 @@ class BaseConhecimentoNomes:
         cnpj_limpo = ''.join(filter(str.isdigit, cnpj))
         
         # Busca na base de conhecimento
-        return cls._MAPEAMENTO_CNPJ_NOMES.get(cnpj_limpo)
+        nome = cls._MAPEAMENTO_CNPJ_NOMES.get(cnpj_limpo)
+        if nome:
+            return nome
+
+        store = cls._obter_store_aprendizado()
+        if store:
+            nome_aprendido = store.buscar_nome_por_documento(cnpj_limpo)
+            if nome_aprendido:
+                return nome_aprendido
+
+        return None
+
+    @staticmethod
+    def _normalizar_nome(nome: str) -> str:
+        """Normaliza nome para comparacoes robustas (sem acento/pontuacao)."""
+        if not nome:
+            return ""
+        texto = unicodedata.normalize('NFD', str(nome).upper())
+        texto = ''.join(ch for ch in texto if unicodedata.category(ch) != 'Mn')
+        texto = re.sub(r'[^A-Z0-9]+', ' ', texto)
+        return re.sub(r'\s+', ' ', texto).strip()
+
+    @classmethod
+    def buscar_cnpj_por_nome(cls, nome: str, campo: Optional[str] = None) -> Optional[str]:
+        """
+        Busca CNPJ a partir do nome (exato ou prefixo unico).
+
+        Retorna apenas quando encontra correspondencia unica para evitar
+        preenchimento incorreto.
+        """
+        chave = cls._normalizar_nome(nome)
+        if not chave or len(chave) < 8:
+            return None
+
+        # Match exato tem prioridade.
+        candidatos_exatos = [
+            cnpj for cnpj, nome_base in cls._MAPEAMENTO_CNPJ_NOMES.items()
+            if cls._normalizar_nome(nome_base) == chave
+        ]
+        if len(candidatos_exatos) == 1:
+            return candidatos_exatos[0]
+        if len(candidatos_exatos) > 1:
+            return None
+
+        # Match por prefixo/contem, exigindo trecho significativo.
+        candidatos_aprox = []
+        for cnpj, nome_base in cls._MAPEAMENTO_CNPJ_NOMES.items():
+            base = cls._normalizar_nome(nome_base)
+            if not base:
+                continue
+            menor, maior = (chave, base) if len(chave) <= len(base) else (base, chave)
+            if len(menor) >= 12 and (maior.startswith(menor) or menor in maior):
+                candidatos_aprox.append(cnpj)
+
+        if len(candidatos_aprox) == 1:
+            return candidatos_aprox[0]
+
+        store = cls._obter_store_aprendizado()
+        if store:
+            doc_aprendido = store.buscar_documento_por_nome(nome, campo=campo)
+            if doc_aprendido:
+                return doc_aprendido
+
+        return None
     
     @classmethod
     def existe_cnpj(cls, cnpj: str) -> bool:
@@ -193,7 +272,13 @@ class BaseConhecimentoNomes:
             True se o CNPJ está na base, False caso contrário
         """
         cnpj_limpo = ''.join(filter(str.isdigit, cnpj))
-        return cnpj_limpo in cls._MAPEAMENTO_CNPJ_NOMES
+        if cnpj_limpo in cls._MAPEAMENTO_CNPJ_NOMES:
+            return True
+
+        store = cls._obter_store_aprendizado()
+        if store:
+            return store.existe_documento(cnpj_limpo)
+        return False
     
     @classmethod
     def obter_todos_mapeamentos(cls) -> Dict[str, str]:
@@ -213,7 +298,16 @@ class BaseConhecimentoNomes:
         Returns:
             Número total de CNPJs cadastrados
         """
-        return len(cls._MAPEAMENTO_CNPJ_NOMES)
+        total_base = len(cls._MAPEAMENTO_CNPJ_NOMES)
+        store = cls._obter_store_aprendizado()
+        if not store:
+            return total_base
+        try:
+            resumo = store.resumo_memoria()
+            total_docs_memoria = int(resumo.get("total_documentos", 0))
+            return total_base + total_docs_memoria
+        except Exception:
+            return total_base
     
     @classmethod
     def adicionar_mapeamento(cls, cnpj: str, nome: str) -> None:
