@@ -108,14 +108,16 @@ class SiproquimProcessor:
         """
         nf_num = nf.get('nf_numero', 'N/A')
         
-        # --- VERIFICAÇÃO 1: CPF NO LUGAR DE CNPJ (Caso Leonardo/Thalita) ---
-        # O SIPROQUIM exige CNPJ (14 dígitos). Se for CPF (11 dígitos), o humano precisa decidir.
+        # --- VERIFICAÇÃO 1: CPF VÁLIDO EM CAMPO TN ---
         for chave, tipo_pessoa in [('contratante_cnpj', 'Contratante'), ('destinatario_cnpj', 'Destinatário')]:
             doc = self._normalizar_documento(nf.get(chave, ''))
             
             if len(doc) == 11 and validar_cpf(doc):
-                self._log_gui("ACAO_NECESSARIA", f"NF {nf_num}: {tipo_pessoa} é CPF ({doc}) ao invés de CNPJ.")
-                self._log_gui("ACAO_NECESSARIA", f"   -> O registro foi mantido no TXT. Abra o arquivo gerado, procure por '{doc}' (ou NF {nf_num}) e substitua por um CNPJ válido da empresa.")
+                self._log_gui(
+                    "INFO",
+                    f"NF {nf_num}: {tipo_pessoa} com CPF válido ({doc}) será exportado "
+                    "no campo de 14 posições sem zero-fill."
+                )
 
         # --- VERIFICAÇÃO 2: NOME AINDA VAZIO (Após tentativa de auto-correção) ---
         campos_verificar = [

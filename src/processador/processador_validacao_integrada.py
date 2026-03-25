@@ -11,6 +11,7 @@ from .validador_campos import ValidadorCampos, ErroValidacao
 from .validador_estrutura_pdf import ValidadorEstruturaPDF
 from .validacao_constants import ConfigValidacao
 from .base_conhecimento import BaseConhecimentoNomes
+from ..gerador.layout_constants import RECEBEDOR_NAO_INFORMADO
 from ..gerador.validators import validar_cpf, validar_cnpj
 
 
@@ -97,6 +98,51 @@ class ProcessadorValidacaoIntegrada:
         texto = ''.join(ch for ch in texto if unicodedata.category(ch) != "Mn")
         texto = re.sub(r"[^A-Z0-9]+", " ", texto)
         return re.sub(r"\s+", " ", texto).strip()
+
+    @staticmethod
+    def _recebedor_placeholder(valor: object) -> bool:
+        texto = ProcessadorValidacaoIntegrada._normalizar_texto(valor)
+        if not texto:
+            return True
+
+        texto_upper = texto.upper()
+        termos_invalidos = {
+            "ASSINATURA",
+            "ASSINADO",
+            "ASSINADO E CARIMBADO",
+            "RUBRICA",
+            "CARIMBO",
+            "ASS",
+            RECEBEDOR_NAO_INFORMADO,
+        }
+        if texto_upper in termos_invalidos:
+            return True
+        if re.fullmatch(r"[-_/\\.|]+", texto):
+            return True
+        if not re.search(r"[A-Z0-9]", texto_upper):
+            return True
+        return False
+
+    def _normalizar_recebedor_operacional(self, nf: Dict) -> bool:
+        """Troca placeholders de recebedor por um nome operacional seguro antes da validacao."""
+        atual = self._normalizar_texto(nf.get('recebedor', ''))
+        if atual and not self._recebedor_placeholder(atual) and len(atual) >= 3:
+            return False
+
+        for chave in ('destinatario_nome', 'contratante_nome', 'emitente_nome'):
+            candidato = self._normalizar_texto(nf.get(chave, ''))
+            if candidato and not self._recebedor_placeholder(candidato) and len(candidato) >= 3:
+                if candidato != atual:
+                    nf_num = nf.get('nf_numero', 'N/A')
+                    self._log_gui("SUCESSO", f"NF {nf_num}: Recebedor ajustado automaticamente -> {candidato}")
+                nf['recebedor'] = candidato
+                return candidato != atual
+
+        if not atual:
+            nf['recebedor'] = RECEBEDOR_NAO_INFORMADO
+            return True
+
+        return False
 
     def _construir_indice_documentos(self, registros: List[Dict]) -> None:
         """Monta indice nome -> CNPJ valido observado no proprio lote."""
@@ -193,7 +239,11 @@ class ProcessadorValidacaoIntegrada:
             self._log_gui("CRITICO", self.validador_estrutura.obter_relatorio())
             raise
     
-    def filtrar_dados_validos(self, nfs_extraidas: List[Dict]) -> List[Dict]:
+    def filtrar_dados_validos(
+        self,
+        nfs_extraidas: List[Dict],
+        callback_cancelamento: Optional[Callable[[], bool]] = None,
+    ) -> List[Dict]:
         """
         Processa as NFs com validação robusta:
         1. Valida cada campo (checksum, formato, integridade)
@@ -221,7 +271,13 @@ class ProcessadorValidacaoIntegrada:
         self._construir_indice_documentos(nfs_extraidas)
 
         for idx, nf in enumerate(nfs_extraidas, 1):
+            if callback_cancelamento and callback_cancelamento():
+                break
             nf_num = nf.get('nf_numero', f'REG_{idx}')
+            corrigiu_recebedor = self._normalizar_recebedor_operacional(nf)
+            corrigiu_dados = self._tentar_corrigir_dados(nf)
+            if corrigiu_recebedor or corrigiu_dados:
+                self.registros_corrigidos_count += 1
             
             # ETAPA 1: VALIDAÇÃO COMPLETA (Checksum, Formato, Integridade)
             erros = self.validador_campos.validar_registro_completo(nf)
@@ -243,10 +299,6 @@ class ProcessadorValidacaoIntegrada:
                     self._log_gui(erro.severidade, f"  -> {erro.mensagem}")
             
             # ETAPA 2: TENTA CORRIGIR DADOS (Auto-correção)
-            corrigiu = self._tentar_corrigir_dados(nf)
-            if corrigiu:
-                self.registros_corrigidos_count += 1
-            
             # ETAPA 3: AUDITA PARA O HUMANO (Aponta erros que não conseguiu resolver)
             self._auditar_para_humano(nf)
             
@@ -314,21 +366,60 @@ class ProcessadorValidacaoIntegrada:
         
         def registrar_ajuste():
             self.ajustes_manuais_count += 1
+
+        campos_documento = [
+            ('emitente_cnpj', 'Emitente', False),
+            ('contratante_cnpj', 'Contratante', True),
+            ('destinatario_cnpj', 'Destinatario', True),
+        ]
+        for chave_doc, tipo_pessoa, aceita_cpf in campos_documento:
+            doc = self._normalizar_documento(nf.get(chave_doc, ''))
+            if doc:
+                continue
+
+            registrar_ajuste()
+            self._emitir_ajuste(
+                nf_num,
+                "ACAO_NECESSARIA",
+                f"Documento {tipo_pessoa} ausente no PDF."
+            )
+            doc_esperado = "CPF/CNPJ" if aceita_cpf else "CNPJ"
+            self._log_gui(
+                "ACAO_NECESSARIA",
+                f"NF {nf_num}: {doc_esperado} do {tipo_pessoa} nao foi extraido."
+            )
+
+        cte_num = self._normalizar_texto(nf.get('cte_numero', ''))
+        cte_data = self._normalizar_texto(nf.get('cte_data', ''))
+        if not cte_num or not cte_data:
+            registrar_ajuste()
+            faltantes = []
+            if not cte_num:
+                faltantes.append("numero")
+            if not cte_data:
+                faltantes.append("data")
+            faltantes_txt = " e ".join(faltantes)
+            self._emitir_ajuste(
+                nf_num,
+                "ATENCAO",
+                f"CT-e sem {faltantes_txt}; a linha CC pode nao ser gerada."
+            )
+            self._log_gui(
+                "ATENCAO",
+                f"NF {nf_num}: CT-e sem {faltantes_txt}. Revise manualmente antes do envio."
+            )
         
-        # --- VERIFICAÇÃO 1: CPF NO LUGAR DE CNPJ (Caso Leonardo/Thalita) ---
+        # --- VERIFICAÇÃO 1: CPF VÁLIDO EM CAMPO TN ---
         for chave, tipo_pessoa in [('contratante_cnpj', 'Contratante'), 
                                     ('destinatario_cnpj', 'Destinatário')]:
             doc = self._normalizar_documento(nf.get(chave, ''))
             
             if len(doc) == 11 and validar_cpf(doc):
-                registrar_ajuste()
-                self._emitir_ajuste(nf_num, "ACAO_NECESSARIA",
-                                    f"{tipo_pessoa} é CPF ({doc}) ao invés de CNPJ.")
-                self._log_gui("ACAO_NECESSARIA", 
-                              f"NF {nf_num}: {tipo_pessoa} e CPF ({doc}) ao inves de CNPJ.")
-                self._log_gui("ACAO_NECESSARIA", 
-                              f"   -> O registro foi mantido no TXT. Abra o arquivo gerado, "
-                              f"procure por '{doc}' (ou NF {nf_num}) e substitua por um CNPJ valido.")
+                self._log_gui(
+                    "INFO",
+                    f"NF {nf_num}: {tipo_pessoa} com CPF válido ({doc}) será exportado "
+                    "no campo de 14 posições sem zero-fill."
+                )
         
         # --- VERIFICAÇÃO 2: NOME AINDA VAZIO (Após tentativa de auto-correção) ---
         campos_verificar = [

@@ -102,6 +102,7 @@ TN_LOCAL_PROPRIO = "P"
 
 # Tamanho total da linha CC
 CC_TAMANHO_TOTAL = 103
+CC_TAMANHO_MINIMO = CC_TAMANHO_TOTAL
 
 # Posições dos campos na linha CC
 CC_POS_TIPO = (1, 2)                  # Pos 1-2: Tipo "CC"
@@ -121,6 +122,20 @@ CC_TAM_MODAL = 2
 # Valores fixos
 CC_TIPO = "CC"
 CC_MODAL_RODOVIARIO = "RO"
+CC_MODAIS_VALIDOS = {"RO", "AQ", "FE", "AE"}
+
+
+# ============================================================================
+# SUBSECOES LR/LE (Transporte Nacional com armazenagem terceirizada)
+# ============================================================================
+
+# Tamanho total das linhas LR e LE
+LR_TAMANHO_TOTAL = 86
+LE_TAMANHO_TOTAL = 86
+
+# Valores fixos
+LR_TIPO = "LR"
+LE_TIPO = "LE"
 
 
 # ============================================================================

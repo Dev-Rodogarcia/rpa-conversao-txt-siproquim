@@ -5,42 +5,65 @@ Constantes da interface grafica.
 from src.gerador.layout_constants import MESES_ALFANUMERICOS
 
 
+def _pair(light: str, dark: str) -> tuple[str, str]:
+    return (light, dark)
+
+
 class UIConstants:
     """Constantes de UI usadas no app."""
 
     # Window
-    WINDOW_TITLE = "SIPROQUIM Converter V3 by valentelucass"
-    WINDOW_SIZE = "1250x750"
+    WINDOW_TITLE = "Rodogarcia | Painel SIPROQUIM by valentelucass" 
+    WINDOW_SIZE = "1440x900"
     WINDOW_RESIZABLE = True
     WINDOW_START_MAXIMIZED = True
-    WINDOW_MIN_WIDTH = 1000
-    WINDOW_MIN_HEIGHT = 650
+    WINDOW_MIN_WIDTH = 1180
+    WINDOW_MIN_HEIGHT = 760
 
-    # Colors
-    COLOR_PRIMARY = "#2CC985"
-    COLOR_PRIMARY_HOVER = "#25A96F"
-    COLOR_SECONDARY = "#3B8ED0"
-    COLOR_SECONDARY_HOVER = "#36719F"
-    COLOR_DISABLED = "gray30"
+    # Visual identity
+    COLOR_PRIMARY = _pair("#21478A", "#7AA8F6")
+    COLOR_PRIMARY_HOVER = _pair("#1A3970", "#5B93F3")
+    COLOR_PRIMARY_PRESSED = _pair("#15315E", "#3A72E4")
+    COLOR_SECONDARY = _pair("#2B89D9", "#5EB7FF")
+    COLOR_SECONDARY_HOVER = _pair("#2270B3", "#489EE3")
+    COLOR_DISABLED = _pair("#C9D6E3", "#33455D")
 
-    COLOR_LOG_ERROR = "#FF6B6B"
-    COLOR_LOG_SUCCESS = "#51CF66"
-    COLOR_LOG_INFO = "#FFFFFF"
-    COLOR_LOG_DEBUG = "#A78BFA"
-    COLOR_LOG_WARNING = "#FFD43B"
-    COLOR_LOG_SYSTEM = "#60A5FA"
-    COLOR_LOG_STATUS = "#22D3EE"
-    COLOR_LOG_ACTION = "#A3E635"
-    COLOR_LOG_NF = "#FFFFFF"
+    COLOR_SUCCESS = _pair("#1F7A63", "#4CC29D")
+    COLOR_SUCCESS_SOFT = _pair("#EAEFF4", "#18342D")
+    COLOR_DANGER = _pair("#B55045", "#F08B81")
+    COLOR_DANGER_SOFT = _pair("#FBEAE8", "#3D2325")
+    COLOR_WARNING = _pair("#B7791F", "#F0BE57")
+    COLOR_WARNING_SOFT = _pair("#FFF5E4", "#3B2E19")
 
-    COLOR_TEXT_PRIMARY = ("gray10", "gray90")
-    COLOR_TEXT_SECONDARY = "gray60"
-    COLOR_TEXT_HINT = "gray50"
-    COLOR_TEXT_SUCCESS = "#2CC985"
+    COLOR_BG_APP = _pair("#E2E8F0", "#020817")
+    COLOR_BG_FRAME = _pair("#FFFFFF", "#0F172A")
+    COLOR_BG_FRAME_LOGS = _pair("#FFFFFF", "#0F172A")
+    COLOR_BG_TEXTBOX = _pair("#F8FAFC", "#08111F")
+    COLOR_BG_SURFACE_ALT = _pair("#F1F5F9", "#122033")
+    COLOR_BG_FIELD_PANEL = _pair("#F8FAFC", "#0F172A")
+    COLOR_BG_BADGE_NEUTRAL = _pair("#EFF6FF", "#16243A")
+    COLOR_BG_BADGE_RUNNING = _pair("#E0F2FE", "#173155")
 
-    COLOR_BG_FRAME = ("gray90", "gray15")
-    COLOR_BG_FRAME_LOGS = ("gray85", "gray20")
-    COLOR_BG_TEXTBOX = ("gray95", "gray10")
+    COLOR_BORDER = _pair("#CBD5E1", "#22324A")
+    COLOR_BORDER_STRONG = _pair("#94A3B8", "#334155")
+
+    COLOR_TEXT_PRIMARY = _pair("#0F172A", "#F8FAFC")
+    COLOR_TEXT_SECONDARY = _pair("#64748B", "#C0CFE4")
+    COLOR_TEXT_HINT = _pair("#94A3B8", "#7E92AF")
+    COLOR_TEXT_SUCCESS = _pair("#1F7A63", "#69D1AF")
+    COLOR_TEXT_DANGER = _pair("#B55045", "#F3A29A")
+    COLOR_TEXT_ON_PRIMARY = _pair("#FFFFFF", "#09111F")
+
+    # Logs
+    COLOR_LOG_ERROR = "#B55045"
+    COLOR_LOG_SUCCESS = "#1F7A63"
+    COLOR_LOG_INFO = "#21478A"
+    COLOR_LOG_DEBUG = "#64748B"
+    COLOR_LOG_WARNING = "#B7791F"
+    COLOR_LOG_SYSTEM = "#21478A"
+    COLOR_LOG_STATUS = "#2B89D9"
+    COLOR_LOG_ACTION = "#21478A"
+    COLOR_LOG_NF = "#0F172A"
 
     # Dimensions
     LOG_FONT_SIZE_MIN = 9
@@ -48,78 +71,107 @@ class UIConstants:
     LOG_FONT_SIZE_MAX = 18
     LOG_FONT_SIZE_STEP = 1
 
-    FONT_SIZE_TITLE = 26
-    FONT_SIZE_SUBTITLE = 13
-    FONT_SIZE_HEADING = 14
-    FONT_SIZE_NORMAL = 12
-    FONT_SIZE_SMALL = 11
-    FONT_SIZE_TINY = 10
+    FONT_SIZE_TITLE = 28
+    FONT_SIZE_SUBTITLE = 12
+    FONT_SIZE_HEADING = 18
+    FONT_SIZE_NORMAL = 13
+    FONT_SIZE_SMALL = 12
+    FONT_SIZE_TINY = 11
     FONT_SIZE_BUTTON = 15
+    FONT_SIZE_METRIC = 30
+    FONT_SIZE_BADGE = 11
 
-    HEIGHT_ENTRY = 35
-    HEIGHT_BUTTON_SMALL = 35
-    HEIGHT_BUTTON_LARGE = 50
-    HEIGHT_TEXTBOX_LOGS = 150
-    HEIGHT_PROGRESS_BAR = 10
+    HEIGHT_ENTRY = 40
+    HEIGHT_BUTTON_SMALL = 38
+    HEIGHT_BUTTON_LARGE = 46
+    HEIGHT_PROGRESS_BAR = 14
 
-    WIDTH_BUTTON_SMALL = 100
-    WIDTH_COMBO_MES = 150
-    WIDTH_COMBO_ANO = 150
+    WIDTH_BUTTON_SMALL = 110
+    WIDTH_COMBO_MES = 170
+    WIDTH_COMBO_ANO = 170
 
-    PADDING_FRAME = 30
+    PADDING_FRAME = 24
     PADDING_MAIN = 20
-    PADDING_INTERNAL = 10
-    PADDING_SMALL = 5
+    PADDING_INTERNAL = 12
+    PADDING_SMALL = 6
 
-    CORNER_RADIUS_MAIN = 15
-    CORNER_RADIUS_FRAME = 10
-    CORNER_RADIUS_LOGS = 8
+    CORNER_RADIUS_MAIN = 0
+    CORNER_RADIUS_FRAME = 20
+    CORNER_RADIUS_LOGS = 20
+    CORNER_RADIUS_HEADER = 24
+    CORNER_RADIUS_BUTTON = 10
+    CORNER_RADIUS_BUTTON_SEC = 10
+    CORNER_RADIUS_BADGE = 999
 
     # Texts
-    TEXT_TITLE = "Conversor SIPROQUIM - Rodogarcia"
-    TEXT_SUBTITLE = "Transforme seus PDFs de frete no padrao da Policia Federal"
+    TEXT_TITLE = "Conversor Operacional SIPROQUIM"
+    TEXT_SUBTITLE = "Operacao compacta para leitura de PDFs, validacao estrutural e envio consistente ao SIPROQUIM."
+    TEXT_HEADER_KICKER = "PAINEL OPERACIONAL"
+    TEXT_HEADER_SELO = "MAPAS E TRANSPORTE NACIONAL"
+    TEXT_HEADER_STATUS_TITLE = "Status do robo"
+    TEXT_HEADER_STATUS_DETAIL = "Aguardando novo lote para processamento."
+    TEXT_THEME_LABEL = "Tema"
+    TEXT_THEME_LIGHT = "Claro"
+    TEXT_THEME_DARK = "Escuro"
 
-    TEXT_STEP_1 = "1. Selecione o arquivo PDF"
-    TEXT_STEP_2 = "2. Filial / CNPJ do Mapa"
-    TEXT_STEP_3 = "3. Periodo de Referencia (Mes/Ano)"
-    TEXT_STEP_4 = "4. Aprendizado (opcional)"
+    TEXT_STEP_1 = "Arquivo de origem"
+    TEXT_STEP_2 = "Filial e CNPJ do mapa"
+    TEXT_STEP_3 = "Periodo de referencia"
+    TEXT_STEP_4 = "Memoria de aprendizado"
 
-    PLACEHOLDER_PDF = "Nenhum arquivo selecionado..."
-    PLACEHOLDER_CNPJ = "Digite o CNPJ (14 digitos) ou busque pela filial"
-    PLACEHOLDER_ANO = "Ano (ex: 2025)"
+    PLACEHOLDER_PDF = "Selecione o PDF de fretes para iniciar o processamento"
+    PLACEHOLDER_CNPJ = "Digite o CNPJ da filial ou use a busca"
+    PLACEHOLDER_ANO = "Ano (ex: 2026)"
     PLACEHOLDER_COMBO_FILIAL = "Selecione uma filial..."
 
-    TEXT_BUTTON_BUSCAR_PDF = "Buscar PDF"
+    TEXT_BUTTON_BUSCAR_PDF = "Selecionar PDF"
     TEXT_BUTTON_BUSCAR_FILIAL = "Buscar"
-    TEXT_BUTTON_CONVERTER = "CONVERTER AGORA"
-    TEXT_BUTTON_PROCESSANDO = "PROCESSANDO..."
+    TEXT_BUTTON_CONVERTER = "Processar arquivo"
+    TEXT_BUTTON_PROCESSANDO = "Processando..."
     TEXT_BUTTON_APRENDER_TXT = "Aprender TXT corrigido"
-    TEXT_BUTTON_APRENDENDO_TXT = "APRENDENDO..."
+    TEXT_BUTTON_APRENDENDO_TXT = "Aprendendo..."
     TEXT_BUTTON_ABRIR_MEMORIA = "Abrir pasta memoria"
+    TEXT_BUTTON_EXPORTAR_LOG = "Exportar"
+    TEXT_BUTTON_LOGS_FULLSCREEN = "Tela cheia"
 
-    TEXT_DICA_CNPJ = "Digite o CNPJ e clique em 'Buscar' ou selecione uma filial."
-    TEXT_DICA_MES_ANO = "Periodo de referencia conforme SIPROQUIM (ex: DEZ/2025)."
+    TEXT_ACTION_TITLE = "Inicializar processo"
+    TEXT_ACTION_HINT = "Valida o layout final antes do upload e salva o TXT padronizado na pasta Downloads."
+
+    TEXT_DICA_CNPJ = "Busque a filial pelo CNPJ ou selecione diretamente na lista cadastrada."
+    TEXT_DICA_MES_ANO = "Use o periodo do mapa que sera importado no SIPROQUIM."
     TEXT_DICA_APRENDIZADO = (
-        "Opcional: reimporte um TXT corrigido para o sistema aprender e reutilizar nos proximos lotes."
+        "Reimporte um TXT corrigido para reforcar a memoria operacional e reduzir ajustes manuais nos proximos lotes."
     )
 
-    TEXT_LOGS_TITLE = "Logs de Processamento"
+    TEXT_LOGS_TITLE = "Historico de execucao"
+    TEXT_LOGS_SUBTITLE = "Console operacional do lote em tempo real."
     TEXT_LOGS_LEGEND = (
-        "SYSTEM=Processo | CONFIG=Configuracao | STATUS=Etapa | PROGRESSO=Andamento | "
-        "RELATORIO=Resumo final | CHECK=Indicadores | AVISO=Revisao manual | ERRO=Falha | EXPORT=Arquivo"
+        "SYSTEM=Processo | STATUS=Etapa | PROGRESSO=Andamento | CHECK=Validacao | "
+        "AVISO=Revisao manual | ERRO=Falha | EXPORT=Arquivo"
     )
-    TEXT_STATUS_DEFAULT = "Aguardando acao do usuario..."
+    TEXT_STATUS_DEFAULT = "Aguardando selecao do arquivo e parametros do mapa."
     TEXT_STATUS_INICIANDO = "Iniciando processamento..."
     TEXT_STATUS_ABRINDO_PDF = "Abrindo arquivo PDF..."
+    TEXT_PROGRESS_TITLE = "Progresso do lote"
+    TEXT_PROGRESS_CONTEXT = "Preparando ambiente de processamento."
 
-    TEXT_SUCESSO_CONVERSAO = "Conversao concluida com sucesso!"
+    TEXT_METRIC_REGISTROS = "Registros extraidos"
+    TEXT_METRIC_NFS = "NFs unicas"
+    TEXT_METRIC_AJUSTES = "Ajustes manuais"
+    TEXT_METRIC_CRITICOS = "Erros criticos"
+
+    TEXT_LOG_SUMMARY_EVENTOS = "Eventos"
+    TEXT_LOG_SUMMARY_PENDENCIAS = "Pendencias"
+    TEXT_LOG_SUMMARY_ULTIMO = "Ultimo evento"
+
+    TEXT_SUCESSO_CONVERSAO = "Conversao concluida com sucesso."
     TEXT_SUCESSO_ARQUIVO_SALVO = "Arquivo salvo em:"
     TEXT_SUCESSO_ABRIR_DOWNLOADS = "Abrir pasta de downloads?"
 
     TEXT_ERRO_PDF_INVALIDO = "PDF invalido."
     TEXT_ERRO_CNPJ_INVALIDO = "CNPJ deve ter {digitos} digitos."
     TEXT_ERRO_MES_NAO_SELECIONADO = "Selecione o mes de referencia."
-    TEXT_ERRO_ANO_INVALIDO = "Ano deve ter 4 digitos (ex: 2025)."
+    TEXT_ERRO_ANO_INVALIDO = "Ano deve ter 4 digitos (ex: 2026)."
     TEXT_ERRO_ANO_FORA_INTERVALO = "Ano deve estar entre {min} e {max}."
     TEXT_ERRO_ANO_INVALIDO_VALOR = "Ano invalido."
     TEXT_ERRO_MES_INVALIDO = "Mes invalido: {mes}"
@@ -175,10 +227,16 @@ class UIConstants:
         "RELATORIO": COLOR_LOG_SYSTEM,
         "CHECK": COLOR_LOG_SUCCESS,
         "EXPORT": COLOR_LOG_SUCCESS,
+        "CRITICO": COLOR_LOG_ERROR,
     }
 
-    THEME_MODE = "Dark"
+    THEME_MODE = "Light"
     THEME_COLOR = "blue"
+    THEME_OPTIONS = [TEXT_THEME_LIGHT, TEXT_THEME_DARK]
+    THEME_OPTION_TO_MODE = {
+        TEXT_THEME_LIGHT: "Light",
+        TEXT_THEME_DARK: "Dark",
+    }
 
     FILE_TYPES_PDF = [("Arquivos PDF", "*.pdf"), ("Todos os arquivos", "*.*")]
     FILE_TYPES_TXT = [("Arquivos TXT", "*.txt"), ("Todos os arquivos", "*.*")]
@@ -190,6 +248,6 @@ class UIConstants:
 
     FORMATO_NOME_ARQUIVO = "M{ano}{mes}{cnpj}.txt"
 
-    FONT_FAMILY_TITLE = "Roboto"
+    FONT_FAMILY_TITLE = "Manrope"
+    FONT_FAMILY_TEXT = "Manrope"
     FONT_FAMILY_LOGS = "Consolas"
-

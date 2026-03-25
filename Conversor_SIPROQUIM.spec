@@ -3,8 +3,10 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['pdfplumber', 'unidecode', 'src.extrator', 'src.gerador', 'src.extrator.pdf_extractor', 'src.extrator.tabela_parser', 'src.extrator.campo_extractor', 'src.gerador.txt_generator', 'src.gerador.sanitizers', 'main']
+hiddenimports = ['pdfplumber', 'unidecode', 'src.extrator', 'src.gerador', 'src.extrator.pdf_extractor', 'src.extrator.tabela_parser', 'src.extrator.campo_extractor', 'src.gerador.txt_generator', 'src.gerador.sanitizers', 'src.ui.ui_main', 'src.ui.componentes', 'src.ui.logger', 'src.ui.rpa_worker', 'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets']
 tmp_ret = collect_all('src')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

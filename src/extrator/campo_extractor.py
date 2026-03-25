@@ -69,6 +69,33 @@ def _subsequencias(valor: str, tamanho: int, limite: int) -> list[str]:
     return resultado
 
 
+def _normalizar_recebedor_extraido(valor: str) -> Optional[str]:
+    """Descarta placeholders operacionais comuns antes de usar o recebedor."""
+    recebedor = re.sub(r'\s+', ' ', str(valor or '')).strip(" -:;|/\t")
+    if not recebedor:
+        return None
+
+    recebedor_upper = recebedor.upper()
+    termos_invalidos = {
+        'NONE',
+        'NULL',
+        'DATA ENTREGA:',
+        'ASSINATURA',
+        'ASSINADO',
+        'ASSINADO E CARIMBADO',
+        'RUBRICA',
+        'CARIMBO',
+        'ASS',
+    }
+    if recebedor_upper in termos_invalidos:
+        return None
+    if re.fullmatch(r"[-_/\\.|]+", recebedor):
+        return None
+    if not re.search(r"[A-Z0-9]", recebedor_upper):
+        return None
+    return recebedor
+
+
 def _extrair_cnpj_ocr_ruidoso(texto: str) -> Optional[str]:
     """
     Tenta recuperar CNPJ em texto com OCR ruidoso.
@@ -460,23 +487,22 @@ def extrair_recebedor(texto: str) -> Optional[str]:
         recebedor = match.group(1).strip()
         # Remove "DATA ENTREGA:" se aparecer
         recebedor = re.sub(r'\s*DATA\s*ENTREGA\s*:?\s*.*$', '', recebedor, flags=re.IGNORECASE)
-        recebedor = recebedor.strip()
-        
-        if recebedor and recebedor.upper() not in ['', 'NONE', 'NULL', 'DATA ENTREGA:']:
-            return recebedor
+        recebedor_normalizado = _normalizar_recebedor_extraido(recebedor)
+        if recebedor_normalizado:
+            return recebedor_normalizado
     
     # Padrão 2: Busca por "RESPONSAVEL" ou "RESPONSÁVEL" (variações)
     match = re.search(r'RESPONS[ÁA]VEL\s*(?:PELO\s*)?(?:RECEBIMENTO|RECEBEDOR)?\s*:?\s*([^\n]+)', texto, re.IGNORECASE)
     if match:
-        recebedor = match.group(1).strip()
-        if recebedor and recebedor.upper() not in ['', 'NONE', 'NULL']:
-            return recebedor
+        recebedor_normalizado = _normalizar_recebedor_extraido(match.group(1))
+        if recebedor_normalizado:
+            return recebedor_normalizado
     
     # Padrão 3: Busca por "RECEBIDO POR" ou "RECEBIDO EM"
     match = re.search(r'RECEBIDO\s*(?:POR|EM)\s*:?\s*([^\n]+)', texto, re.IGNORECASE)
     if match:
-        recebedor = match.group(1).strip()
-        if recebedor and recebedor.upper() not in ['', 'NONE', 'NULL']:
-            return recebedor
+        recebedor_normalizado = _normalizar_recebedor_extraido(match.group(1))
+        if recebedor_normalizado:
+            return recebedor_normalizado
     
     return None

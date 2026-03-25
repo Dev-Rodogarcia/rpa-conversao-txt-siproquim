@@ -40,11 +40,23 @@ from .constants import UIConstants
 from .validators import FormValidator, somente_digitos
 from .log_manager import LogManager
 from .progress_manager import ProgressManager
+from .layout_builder import (
+    setup_ui,
+    update_log_summary_cards,
+    update_metric_cards,
+    update_progress_card,
+    update_status_badge,
+)
 from .utils import downloads_dir, gerar_nome_arquivo_saida, extrair_ano_padrao, extrair_mes_padrao
 from src.gerador.layout_constants import CNPJ_TAMANHO  # Constante compartilhada
 from src.processador.aprendizado_store import AprendizadoStore
 
 # Configurações Globais de Tema
+try:
+    import ctypes
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
 ctk.set_appearance_mode(UIConstants.THEME_MODE)
 ctk.set_default_color_theme(UIConstants.THEME_COLOR)
 
@@ -72,6 +84,13 @@ class App(ctk.CTk):
         self.mes_selecionado = StringVar(value=extrair_mes_padrao())
         self.ano_selecionado = StringVar(value=str(extrair_ano_padrao()))
         self.status = StringVar(value=UIConstants.TEXT_STATUS_DEFAULT)
+        self.theme_choice = StringVar(
+            value=(
+                UIConstants.TEXT_THEME_DARK
+                if UIConstants.THEME_MODE == "Dark"
+                else UIConstants.TEXT_THEME_LIGHT
+            )
+        )
         
         # Gerenciadores
         self._is_busy = False
@@ -90,12 +109,16 @@ class App(ctk.CTk):
         self._logs_prev_geom = None
         self._logs_animando = False
         self._thread_aprendizado = None
+        self._ui_images = {}
+        self._log_event_count = 0
+        self._log_pending_count = 0
+        self._ultimo_log_resumo = "Nenhum evento registrado."
         try:
             self._aprendizado_store = AprendizadoStore.get_instance()
         except Exception:
             self._aprendizado_store = None
         
-        self._build_ui()
+        setup_ui(self)
         
         # Inicializa gerenciador de logs após criar os widgets
         # Passa frame_logs_col para mostrar/ocultar toda a coluna de logs se necessário
@@ -103,7 +126,8 @@ class App(ctk.CTk):
             self.textbox_logs,
             self.frame_logs_col,
             UIConstants.FONT_FAMILY_LOGS,
-            UIConstants.LOG_FONT_SIZE_DEFAULT
+            UIConstants.LOG_FONT_SIZE_DEFAULT,
+            on_log_added=self._registrar_resumo_log
         )
         
         # Log inicial de inicialização
@@ -165,6 +189,31 @@ class App(ctk.CTk):
             self.attributes("-zoomed", True)
         except Exception:
             pass
+
+    def _registrar_resumo_log(self, timestamp: str, tipo: str, mensagem: str) -> None:
+        """Atualiza o resumo de logs exibido acima do historico."""
+        self._log_event_count += 1
+        if tipo in {"ERRO", "AVISO", "ALERTA", "ATENCAO", "ACAO_NECESSARIA", "CRITICO"}:
+            self._log_pending_count += 1
+
+        resumo = " ".join(str(mensagem or "").split())
+        if not resumo:
+            resumo = "Evento sem descricao."
+        if len(resumo) > 96:
+            resumo = resumo[:93] + "..."
+
+        self._ultimo_log_resumo = f"{timestamp} | {tipo} | {resumo}"
+        update_log_summary_cards(self)
+
+    def _on_status_text_changed(self, *args) -> None:
+        """Sincroniza o status textual com o badge do cabecalho."""
+        update_status_badge(self, self.status.get())
+
+    def _on_theme_change(self, opcao: str) -> None:
+        """Alterna entre os modos claro e escuro da interface."""
+        modo = UIConstants.THEME_OPTION_TO_MODE.get(opcao, "Light")
+        self.theme_choice.set(opcao)
+        ctk.set_appearance_mode(modo)
 
     def _build_ui(self) -> None:
         """Constrói toda a interface gráfica."""
@@ -1087,7 +1136,7 @@ class App(ctk.CTk):
             self._entrar_logs_fullscreen()
 
     def _entrar_logs_fullscreen(self) -> None:
-        """Expande a coluna de logs para ocupar todo o layout."""
+        """Expande os logs para ocupar a area principal da pagina."""
         if self._logs_fullscreen or not self.frame_logs_col:
             return
 
@@ -1097,32 +1146,30 @@ class App(ctk.CTk):
             self.btn_logs_fullscreen.configure(text="Voltar")
 
         # Esconde outros blocos para liberar espaco total
-        self.lbl_titulo.grid_remove()
-        self.lbl_subtitulo.grid_remove()
-        self.frame_formulario.grid_remove()
-        self.btn_converter.grid_remove()
+        if self.header_card:
+            self.header_card.grid_remove()
+        if self.frame_formulario:
+            self.frame_formulario.grid_remove()
+        if self.action_bar:
+            self.action_bar.grid_remove()
 
-        # Ajusta grid principal para fullscreen
-        self.main_frame.grid_rowconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(1, weight=0)
-        self.main_frame.grid_rowconfigure(2, weight=0)
-        self.main_frame.grid_rowconfigure(3, weight=0)
-        self.main_frame.grid_columnconfigure(0, weight=1, minsize=0)
-        self.main_frame.grid_columnconfigure(1, weight=1, minsize=0)
-
-        # Move logs para ocupar toda a area
+        # Move logs para o topo e amplia a caixa para leitura dedicada
         self.frame_logs_col.grid_forget()
         self.frame_logs_col.grid(
-            row=0, column=0, rowspan=4, columnspan=2,
+            row=0, column=0, rowspan=4,
             sticky="nsew", padx=0, pady=0
         )
-        self.frame_logs_col.rowconfigure(2, weight=1)
-        self.frame_logs_col.columnconfigure(0, weight=1)
-        self.frame_logs_col.lift()
+        if self.frame_logs:
+            self.frame_logs.configure(height=max(520, self.winfo_height() - 120))
+        if hasattr(self.main_frame, "_parent_canvas"):
+            try:
+                self.main_frame._parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
         self.textbox_logs.focus_set()
 
     def _sair_logs_fullscreen(self) -> None:
-        """Restaura o layout normal dos logs."""
+        """Restaura os logs para o fluxo vertical da pagina."""
         if not self._logs_fullscreen or not self.frame_logs_col:
             return
 
@@ -1131,32 +1178,22 @@ class App(ctk.CTk):
         if self.btn_logs_fullscreen:
             self.btn_logs_fullscreen.configure(text="Tela cheia")
 
-        # Restaura grid principal
-        self.main_frame.grid_rowconfigure(0, weight=0)
-        self.main_frame.grid_rowconfigure(1, weight=0)
-        self.main_frame.grid_rowconfigure(2, weight=1)
-        self.main_frame.grid_rowconfigure(3, weight=0)
-        self.main_frame.grid_columnconfigure(0, weight=1, minsize=500)
-        self.main_frame.grid_columnconfigure(1, weight=1, minsize=400)
-
-        # Restaura logs para posicao original (grid explicito)
+        # Restaura logs para o fluxo vertical original
         self.frame_logs_col.grid_forget()
         self.frame_logs_col.grid(
-            row=2, column=1, sticky="nsew",
-            padx=(15, UIConstants.PADDING_FRAME), pady=(0, 0)
+            row=2, column=0, sticky="ew",
+            padx=0, pady=0
         )
+        if self.frame_logs:
+            self.frame_logs.configure(height=420)
 
-        # Restaura outros blocos (grid explicito)
-        self.lbl_titulo.grid(row=0, column=0, columnspan=2, pady=(15, 5), sticky="n")
-        self.lbl_subtitulo.grid(row=1, column=0, columnspan=2, pady=(0, 15), sticky="n")
-        self.frame_formulario.grid(
-            row=2, column=0, sticky="nsew",
-            padx=(UIConstants.PADDING_FRAME, 15), pady=(0, 0)
-        )
-        self.btn_converter.grid(
-            row=3, column=0, columnspan=2, sticky="ew",
-            padx=UIConstants.PADDING_FRAME, pady=(15, 15)
-        )
+        # Restaura outros blocos
+        if self.header_card:
+            self.header_card.grid(row=0, column=0, sticky="ew", pady=(0, 20))
+        if self.frame_formulario:
+            self.frame_formulario.grid(row=1, column=0, sticky="ew")
+        if self.action_bar:
+            self.action_bar.grid(row=3, column=0, sticky="ew", pady=(20, 0))
         self.update_idletasks()
 
     def _animar_logs(self, inicio, fim, passos: int = 10, duracao_ms: int = 160, ao_final=None) -> None:
@@ -1504,7 +1541,14 @@ class App(ctk.CTk):
                         self._total_registros_extraidos = total
                         self._total_nfs_dedup = total_nfs
                         self.after(0, lambda: self._atualizar_status('Deduplicando registros...', f'{total} registros encontrados'))
-                        self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_DEDUPLICAR))
+                        self.after(0, update_metric_cards, self)
+                        self.after(
+                            0,
+                            update_progress_card,
+                            self,
+                            UIConstants.PROGRESSO_DEDUPLICAR,
+                            f"{total_nfs} NFs apos deduplicacao",
+                        )
                         self.after(0, lambda: self._log_manager.adicionar(
                             f"Registros encontrados: {total} | Apos deduplicacao: {total_nfs}",
                             "INFO"
@@ -1526,6 +1570,7 @@ class App(ctk.CTk):
                                 'total_ajustes_manuais': detalhes.get('total_ajustes_manuais', 0),
                             }
                             ajustes = self._ultima_estatistica.get('total_ajustes_manuais', 0)
+                            self.after(0, update_metric_cards, self)
                             self.after(0, lambda: self._log_manager.adicionar(
                                 f"Validacao concluida. Ajustes manuais: {ajustes}",
                                 "STATUS"
@@ -1533,7 +1578,13 @@ class App(ctk.CTk):
                     elif etapa == 'gerar':
                         total_nfs = detalhes.get('total_nfs', 0)
                         self.after(0, lambda: self._atualizar_status('Gerando arquivo TXT...', f'{total_nfs} NFs unicas'))
-                        self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_GERAR))
+                        self.after(
+                            0,
+                            update_progress_card,
+                            self,
+                            UIConstants.PROGRESSO_GERAR,
+                            f"Montando arquivo final com {total_nfs} NFs",
+                        )
                         self.after(0, lambda: self._log_manager.adicionar(
                             f"Gerando TXT com {total_nfs} NFs unicas...",
                             "STATUS"
@@ -1568,7 +1619,13 @@ class App(ctk.CTk):
                             else:
                                 self.after(0, lambda: self._log_manager.adicionar(msg_norm, tipo_norm))
                     elif etapa == 'finalizar':
-                        self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO))
+                        self.after(
+                            0,
+                            update_progress_card,
+                            self,
+                            UIConstants.PROGRESSO_COMPLETO,
+                            "Arquivo TXT validado e pronto para envio.",
+                        )
                 except Exception as e:
                     self.after(0, lambda: self._log_manager.adicionar_erro(f"Erro no callback: {str(e)}"))
 
@@ -1620,7 +1677,7 @@ class App(ctk.CTk):
 
     def _atualizar_progresso_extracao(self, pagina_atual, total_paginas, progresso):
         """Atualiza progresso durante extração de páginas."""
-        self.progress_bar.set(progresso)
+        update_progress_card(self, progresso, f"Leitura do PDF: pagina {pagina_atual}/{total_paginas}")
         
         # Calcula tempo decorrido e estimado usando ProgressManager
         tempo_decorrido = self._progress_manager.obter_tempo_decorrido()
@@ -1659,7 +1716,7 @@ class App(ctk.CTk):
             if tem_criticos:
                 self.status.set(f"Processamento finalizado em {tempo_str} com pendências críticas.")
             else:
-                self.status.set(f"✅ Conversão concluída em {tempo_str}!")
+                self.status.set(f"Conversao concluida em {tempo_str}.")
             self.lbl_tempo.configure(text=f"Tempo total: {tempo_str}")
         else:
             if tem_criticos:
@@ -1667,7 +1724,7 @@ class App(ctk.CTk):
             else:
                 self.status.set(UIConstants.TEXT_SUCESSO_CONVERSAO)
         
-        self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO)
+        update_progress_card(self, UIConstants.PROGRESSO_COMPLETO, "Lote finalizado e arquivo pronto para revisao.")
 
         caminho_abs = Path(caminho).absolute()
         if tem_criticos:
@@ -1689,7 +1746,7 @@ class App(ctk.CTk):
         """Callback chamado quando ocorre erro na conversão."""
         self._set_busy(False)
         self.status.set(UIConstants.TEXT_ERRO_CONVERSAO)
-        self.progress_bar.set(0)
+        update_progress_card(self, 0.0, "Falha no processamento. Consulte os logs operacionais.")
         self.lbl_tempo.configure(text="")
         
         # Mostra mensagem de erro
@@ -1700,6 +1757,14 @@ class App(ctk.CTk):
         """Define o estado de processamento (busy/ocioso)."""
         self._is_busy = busy
         if busy:
+            self._log_event_count = 0
+            self._log_pending_count = 0
+            self._ultimo_log_resumo = "Processamento iniciado."
+            self._total_registros_extraidos = 0
+            self._total_nfs_dedup = 0
+            self._ultima_estatistica = {}
+            update_metric_cards(self)
+            update_log_summary_cards(self)
             self.btn_converter.configure(state="disabled", text=UIConstants.TEXT_BUTTON_PROCESSANDO)
             self.btn_buscar.configure(state="disabled")
             self.entry_cnpj.configure(state="disabled")
@@ -1708,7 +1773,7 @@ class App(ctk.CTk):
             if hasattr(self, "btn_abrir_memoria") and self.btn_abrir_memoria:
                 self.btn_abrir_memoria.configure(state="disabled")
             self.progress_bar.configure(mode="determinate")
-            self.progress_bar.set(UIConstants.PROGRESSO_INICIAL)
+            update_progress_card(self, UIConstants.PROGRESSO_INICIAL, UIConstants.TEXT_STATUS_ABRINDO_PDF)
             self._progress_manager.iniciar()
             self.lbl_tempo.configure(text=UIConstants.TEXT_STATUS_INICIANDO)
             self.status.set(UIConstants.TEXT_STATUS_ABRINDO_PDF)
@@ -1723,6 +1788,5 @@ class App(ctk.CTk):
                     self.btn_aprender_txt.configure(state="disabled", text=UIConstants.TEXT_BUTTON_APRENDER_TXT)
             if hasattr(self, "btn_abrir_memoria") and self.btn_abrir_memoria:
                 self.btn_abrir_memoria.configure(state="normal" if self._aprendizado_store else "disabled")
-            self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO)
             self._progress_manager.finalizar()
             self._verificar_habilitar_botao()

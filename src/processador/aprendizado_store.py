@@ -18,6 +18,7 @@ import re
 import sqlite3
 import threading
 import unicodedata
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -87,7 +88,7 @@ class AprendizadoStore:
 
     def resumo_memoria(self) -> Dict[str, object]:
         """Retorna resumo util para logs/UI."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.cursor()
             cur.execute(
                 """
@@ -177,7 +178,7 @@ class AprendizadoStore:
         doc = self._normalizar_documento(documento)
         if not doc:
             return False
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT 1 FROM learned_pairs WHERE documento = ? LIMIT 1",
@@ -269,7 +270,7 @@ class AprendizadoStore:
         pendentes: List[Dict[str, object]] = []
         grupos_tocados: set[Tuple[str, str]] = set()
 
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.cursor()
             cur.execute(
                 """
@@ -699,13 +700,21 @@ class AprendizadoStore:
             return doc, "CPF"
         return None, None
 
+    @contextmanager
+    def _connection(self):
+        conn = self._connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path))
         conn.row_factory = sqlite3.Row
         return conn
 
     def _inicializar_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.cursor()
             cur.execute(
                 """
@@ -824,7 +833,7 @@ class AprendizadoStore:
                 self.STATUS_QUARENTENA: 0,
             }
 
-            with self._connect() as conn:
+            with self._connection() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     """

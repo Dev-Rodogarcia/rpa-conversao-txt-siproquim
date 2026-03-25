@@ -313,7 +313,7 @@ class ExtratorPDF:
         # Para outros tamanhos, preenche com zeros (casos especiais)
         return nums.zfill(CNPJ_TAMANHO)[:CNPJ_TAMANHO]
     
-    def extrair_todos_dados(self, callback_progresso=None) -> List[Dict]:
+    def extrair_todos_dados(self, callback_progresso=None, callback_cancelamento=None) -> List[Dict]:
         """
         Extrai todos os dados de todas as páginas do PDF.
         
@@ -331,12 +331,16 @@ class ExtratorPDF:
         total_paginas = len(self.pdf.pages)
         
         for idx, pagina in enumerate(self.pdf.pages, 1):
+            if callback_cancelamento and callback_cancelamento():
+                break
             dados_pagina = self.extrair_dados_pagina(pagina)
             todos_dados.extend(dados_pagina)
             
             # Chama callback de progresso se fornecido
             if callback_progresso:
                 callback_progresso(idx, total_paginas)
+            if callback_cancelamento and callback_cancelamento():
+                break
         
         return todos_dados
     

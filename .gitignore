@@ -23,6 +23,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environments
+.venv/
 env/
 venv/
 ENV/
@@ -33,11 +34,12 @@ venv.bak/
 *.manifest
 *.spec.bak
 
-# Arquivos de entrada/saída
+# Arquivos de entrada/saída do RPA (PDFs e TXTs gerados pelo conversor)
 *.pdf
 *.txt
 !requirements.txt
 !README.md
+!public/fonts/*.txt
 
 # IDEs
 .vscode/
@@ -72,15 +74,28 @@ backups/
 *.temp
 .cache/
 
-# Scripts de teste/debug (mantém test_validacao_robusta.py versionado)
+# Scripts de debug/análise avulsos
 debug_*.py
 verificar_*.py
 analisar_*.py
 comparar_*.py
-!test_validacao_robusta.py
+
+# Ícones gerados automaticamente (saída de generate_rpa_icons.py)
+rpa-icons/
+
+# Ícones web/PWA gerados — não usados pelo app desktop
+public/favicon-*.png
+public/favicon.ico
+public/favicon.png
+public/apple-touch-icon.png
+public/icon-192.png
+public/icon-512.png
+public/app-icon-128.png
+public/app-icon.ico
+public/app-icon.png
 
 # Installer (Inno Setup)
 installer/output/
 
-# Midia local (nao versionar)
+# Mídia local (não versionar)
 assista-antes-de-usar.mp4

@@ -7,6 +7,8 @@ import re
 import unidecode
 from typing import Optional
 
+from .validators import validar_cpf, validar_cnpj
+
 
 def sanitizar_texto(texto: Optional[str], tamanho: int) -> str:
     """
@@ -79,22 +81,17 @@ def sanitizar_numerico(valor: Optional[str], tamanho: int) -> str:
     """
     Remove tudo que não for número e ajusta ao tamanho especificado.
     
-    CRÍTICO: Diferencia CPF de CNPJ baseado apenas no tamanho (11 vs 14 dígitos).
-    Conforme manual técnico SIPROQUIM:
-    - Campos numéricos: preencher com zeros à esquerda
-    - CPF (11 dígitos) em campo CNPJ (14 dígitos): preenche com zeros à esquerda (padrão numérico)
-    
-    IMPORTANTE: Esta função NÃO valida o documento. A validação deve ser feita ANTES
-    de chamar esta função, no módulo txt_generator.py.
-    
-    Esta função é genérica e funciona para qualquer documento.
+    IMPORTANTE:
+    - esta função é genérica para campos puramente numéricos
+    - não deve ser usada para os campos mistos CPF/CNPJ do layout TN/LR/LE do SIPROQUIM,
+      porque `zfill` em CPF cria um pseudo-CNPJ inválido
     
     Args:
         valor: Valor numérico a ser sanitizado (pode ser None)
-        tamanho: Tamanho final do campo (geralmente 14 para CNPJ)
+        tamanho: Tamanho final do campo
     
     Returns:
-        String numérica com tamanho fixo, respeitando a diferença entre CPF e CNPJ
+        String numérica com tamanho fixo
     """
     if not valor:
         return "0" * tamanho
@@ -123,6 +120,44 @@ def sanitizar_numerico(valor: Optional[str], tamanho: int) -> str:
     return nums.zfill(tamanho)
 
 
+def sanitizar_documento(valor: Optional[str], tamanho: int, aceitar_cpf: bool = True) -> str:
+    """
+    Formata CPF/CNPJ para o layout posicional do SIPROQUIM.
+
+    Regra prática observada no manual:
+    - CNPJ válido permanece com 14 dígitos
+    - CPF válido ocupa o campo de 14 posições com padding em branco à esquerda
+      para não virar um pseudo-CNPJ inválido via `zfill`
+
+    Args:
+        valor: Documento bruto
+        tamanho: Tamanho do campo no layout
+        aceitar_cpf: Se True, aceita CPF válido além de CNPJ válido
+
+    Returns:
+        Documento pronto para o campo posicional
+
+    Raises:
+        ValueError: Quando o documento não é um CPF/CNPJ válido compatível
+    """
+    if tamanho < 14:
+        raise ValueError(f"Campo de documento inválido: tamanho {tamanho} é menor que 14.")
+
+    nums = ''.join(filter(str.isdigit, str(valor or '')))
+    if not nums:
+        return " " * tamanho
+
+    if len(nums) == 14 and validar_cnpj(nums):
+        return nums
+
+    if aceitar_cpf and len(nums) == 11 and validar_cpf(nums):
+        return nums.rjust(tamanho)
+
+    raise ValueError(
+        f"Documento inválido para o layout SIPROQUIM: '{valor}' -> '{nums}'."
+    )
+
+
 def sanitizar_alfanumerico(valor: Optional[str], tamanho: int) -> str:
     """
     Remove zeros à esquerda e ajusta ao tamanho (para campos alfanuméricos como NF).
@@ -137,9 +172,11 @@ def sanitizar_alfanumerico(valor: Optional[str], tamanho: int) -> str:
     if not valor:
         return " " * tamanho
     # Remove zeros à esquerda mas mantém o valor
-    valor_str = str(valor).lstrip('0')
+    valor_str = str(valor).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ').lstrip('0')
     if not valor_str:
         valor_str = "0"
-    # Remove caracteres especiais e converte para maiúscula
-    valor_limpo = re.sub(r'[^\w]', '', valor_str).upper()
+
+    # Normaliza para ASCII e remove tudo que não for letra/número.
+    valor_ascii = unidecode.unidecode(valor_str).upper()
+    valor_limpo = re.sub(r'[^A-Z0-9]', '', valor_ascii)
     return valor_limpo[:tamanho].ljust(tamanho)

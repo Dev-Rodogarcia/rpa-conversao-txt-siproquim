@@ -92,6 +92,7 @@ def _parse_cc(linha: str, numero_linha: int) -> Dict[str, str]:
         "cte_data": _slice_posicional(linha_norm, CC_POS_CTE_DATA).strip(),
         "data_recebimento": _slice_posicional(linha_norm, CC_POS_DATA_RECEBIMENTO).strip(),
         "recebedor": _slice_posicional(linha_norm, CC_POS_RECEBEDOR).strip(),
+        "modal": linha_norm[101:].strip(),
     }
 
 

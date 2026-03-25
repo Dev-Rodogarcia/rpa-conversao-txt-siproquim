@@ -7,10 +7,14 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from src.extrator import ExtratorPDF
 from src.processador import SiproquimProcessor, ProcessadorValidacaoIntegrada
 from src.gerador import GeradorTXT
+
+
+class ProcessamentoInterrompido(RuntimeError):
+    """Sinaliza uma interrupcao cooperativa solicitada pela interface."""
 
 
 def extrair_mes_ano_do_pdf(caminho_pdf: str) -> tuple:
@@ -43,7 +47,8 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
                   caminho_saida: Optional[str] = None,
                   callback_progresso=None,
                   mes: Optional[int] = None,
-                  ano: Optional[int] = None) -> str:
+                  ano: Optional[int] = None,
+                  callback_cancelamento: Optional[Callable[[], bool]] = None) -> str:
     """
     Processa um arquivo PDF e gera o arquivo TXT correspondente.
     
@@ -58,6 +63,10 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     Returns:
         Caminho do arquivo TXT gerado
     """
+    def _verificar_cancelamento() -> None:
+        if callback_cancelamento and callback_cancelamento():
+            raise ProcessamentoInterrompido("Execucao interrompida pelo usuario.")
+
     # Validação de entrada
     if not os.path.exists(caminho_pdf):
         raise FileNotFoundError(f"Arquivo PDF não encontrado: {caminho_pdf}")
@@ -69,6 +78,7 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     
     if callback_progresso:
         callback_progresso('abrir', {'arquivo': Path(caminho_pdf).name})
+    _verificar_cancelamento()
     
     print(f"Processando PDF: {caminho_pdf}")
 
@@ -101,27 +111,35 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
         callback_log=log_wrapper,
         callback_event=event_wrapper
     )
+    _verificar_cancelamento()
     
     # Extrai dados do PDF
     extrator = ExtratorPDF(caminho_pdf)
     try:
         extrator.abrir_pdf()
+        _verificar_cancelamento()
 
         # Valida estrutura do PDF antes da extração (detecta mudança de layout)
         primeira_pagina = extrator.pdf.pages[0] if extrator.pdf and extrator.pdf.pages else None
         texto_pagina = primeira_pagina.extract_text() if primeira_pagina else ""
         processador.validar_estrutura_pdf(texto_pagina or "")
+        _verificar_cancelamento()
         
         # Define callback para progresso de páginas
         def callback_pagina(pagina_atual, total_paginas):
+            _verificar_cancelamento()
             if callback_progresso:
                 callback_progresso('extrair', {
                     'pagina_atual': pagina_atual,
                     'total_paginas': total_paginas
                 })
-        
-        todos_dados = extrator.extrair_todos_dados(callback_progresso=callback_pagina)
+
+        todos_dados = extrator.extrair_todos_dados(
+            callback_progresso=callback_pagina,
+            callback_cancelamento=callback_cancelamento,
+        )
         print(f"Total de registros extraídos: {len(todos_dados)}")
+        _verificar_cancelamento()
         
         
         # Deduplica por número de NF
@@ -133,6 +151,7 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
                 'total_nfs': len(nfs_deduplicadas)
             })
         print(f"Total de NFs únicas após deduplicação: {len(nfs_deduplicadas)}")
+        _verificar_cancelamento()
         
     finally:
         extrator.fechar_pdf()
@@ -142,6 +161,7 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     # NOVO: Valida TODOS os campos (NF, CTe, CNPJs, Datas) ANTES de gerar TXT
     if callback_progresso:
         callback_progresso('processar', {'total_registros': len(nfs_deduplicadas)})
+    _verificar_cancelamento()
     
     
     # Processa com VALIDAÇÃO ROBUSTA: Checksum + Formato + Integridade
@@ -149,7 +169,11 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     # 2. Corrige automaticamente usando base de conhecimento
     # 3. Mantém TODOS os registros no arquivo
     # 4. Avisos aparecem no log para correção manual quando necessário
-    nfs_validas = processador.filtrar_dados_validos(nfs_deduplicadas)
+    nfs_validas = processador.filtrar_dados_validos(
+        nfs_deduplicadas,
+        callback_cancelamento=callback_cancelamento,
+    )
+    _verificar_cancelamento()
     
     # Estatísticas para callback (com informações de validação)
     stats = processador.obter_estatisticas()
@@ -174,10 +198,19 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
             'mes': mes,
             'ano': ano
         })
+    _verificar_cancelamento()
     
     # Gera arquivo TXT (agora só recebe dados que o SIPROQUIM aceita)
     gerador = GeradorTXT(cnpj_rodogarcia)
-    caminho_gerado = gerador.gerar_arquivo(nfs_validas, mes, ano, caminho_saida, callback_progresso=callback_progresso)
+    caminho_gerado = gerador.gerar_arquivo(
+        nfs_validas,
+        mes,
+        ano,
+        caminho_saida,
+        callback_progresso=callback_progresso,
+        callback_cancelamento=callback_cancelamento,
+    )
+    _verificar_cancelamento()
     
     print(f"Arquivo TXT gerado com sucesso: {caminho_gerado}")
     return caminho_gerado

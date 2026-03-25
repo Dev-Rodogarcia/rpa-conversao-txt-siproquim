@@ -13,7 +13,7 @@ class LogManager:
     """Gerenciador de logs para a interface gráfica."""
     
     def __init__(self, textbox: ctk.CTkTextbox, frame_logs: ctk.CTkFrame,
-                 font_family: str, font_size: int):
+                 font_family: str, font_size: int, on_log_added=None):
         """
         Inicializa o gerenciador de logs.
         
@@ -28,6 +28,7 @@ class LogManager:
         self.logs = []
         self.font_family = font_family
         self.font_size = font_size
+        self.on_log_added = on_log_added
         self._font_normal = None
         self._font_bold = None
         self._aplicar_fonte()
@@ -113,6 +114,11 @@ class LogManager:
         self.textbox.configure(state="disabled")
         self.textbox.see("end")  # Scroll to bottom
         # Frame de logs sempre visível no novo layout horizontal
+        if self.on_log_added:
+            try:
+                self.on_log_added(timestamp, tipo, mensagem)
+            except Exception:
+                pass
     
     def _aplicar_destaques(self, log_entry: str, pos_inicio: str) -> None:
         """Aplica destaques para NF e ACAO dentro da linha."""
