@@ -126,6 +126,73 @@ CC_MODAIS_VALIDOS = {"RO", "AQ", "FE", "AE"}
 
 
 # ============================================================================
+# SECAO TI (Transporte Internacional) - Layout 3.1.10
+# ============================================================================
+
+# Tamanho total da linha TI
+TI_TAMANHO_TOTAL = 109
+
+# Posicoes dos campos na linha TI
+TI_POS_TIPO = (1, 2)                    # Pos 1-2: Tipo "TI"
+TI_POS_OPERACAO = (3, 3)                # Pos 3: (E)xportacao ou (I)mportacao
+TI_POS_CONTRATANTE = (4, 4)             # Pos 4: (O)rigem ou (D)estino da carga
+TI_POS_NF_NUMERO = (5, 14)              # Pos 5-14: Numero NF (10 chars)
+TI_POS_NF_DATA = (15, 24)               # Pos 15-24: Data NF (10 chars)
+TI_POS_CNPJ_EMPRESA = (25, 38)          # Pos 25-38: CPF/CNPJ Empresa (14 chars)
+TI_POS_NOME_EMPRESA = (39, 108)         # Pos 39-108: Nome Empresa (70 chars)
+TI_POS_LOCAL_ARMAZENAMENTO = (109, 109) # Pos 109: P ou A
+
+# Tamanhos dos campos TI
+TI_TAM_TIPO = 2
+TI_TAM_OPERACAO = 1
+TI_TAM_CONTRATANTE = 1
+TI_TAM_NF_NUMERO = 10
+TI_TAM_NF_DATA = 10
+TI_TAM_CNPJ = 14
+TI_TAM_NOME = 70
+TI_TAM_LOCAL = 1
+
+# Valores fixos/permitidos TI
+TI_TIPO = "TI"
+TI_OPERACOES_VALIDAS = {"E", "I"}
+TI_CONTRATANTES_VALIDOS = {"O", "D"}
+TI_LOCAIS_ARMAZENAMENTO_VALIDOS = {"P", "A"}
+TI_OPERACAO_EXPORTACAO = "E"
+TI_OPERACAO_IMPORTACAO = "I"
+TI_CONTRATANTE_ORIGEM = "O"
+TI_CONTRATANTE_DESTINO = "D"
+TI_LOCAL_PROPRIO = "P"
+TI_LOCAL_ARMAZENAGEM_TERCEIRIZADA = "A"
+
+
+# ============================================================================
+# SUBSECAO LA (Armazenamento do Transporte Internacional) - Layout 3.1.10.1
+# ============================================================================
+
+LA_TAMANHO_TOTAL = 86
+LA_TIPO = "LA"
+
+
+# ============================================================================
+# SUBSECAO PI (Pessoa Internacional) - Layout 3.1.10.2
+# ============================================================================
+
+PI_TAMANHO_TOTAL = 145
+
+PI_POS_TIPO = (1, 2)              # Pos 1-2: Tipo "PI"
+PI_POS_NOME_EMPRESA = (3, 72)     # Pos 3-72: Nome Empresa (70 chars)
+PI_POS_PAIS_ID = (73, 75)         # Pos 73-75: Id do pais (3 chars)
+PI_POS_ENDERECO = (76, 145)       # Pos 76-145: Endereco completo (70 chars)
+
+PI_TAM_TIPO = 2
+PI_TAM_NOME = 70
+PI_TAM_PAIS_ID = 3
+PI_TAM_ENDERECO = 70
+
+PI_TIPO = "PI"
+
+
+# ============================================================================
 # SUBSECOES LR/LE (Transporte Nacional com armazenagem terceirizada)
 # ============================================================================
 

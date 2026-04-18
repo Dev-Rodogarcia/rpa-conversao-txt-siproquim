@@ -57,6 +57,35 @@ def montar_lr() -> str:
     return "LR" + "42345678000199" + "ARMAZEM RETIRADA".ljust(70)
 
 
+def montar_ti(
+    operacao: str = "E",
+    contratante: str = "O",
+    nf_numero: str = "411574",
+    nf_data: str = "13/03/2026",
+    empresa_doc: str = "43996693000127",
+    empresa_nome: str = "PPG SUM",
+    local_armazenamento: str = "P",
+) -> str:
+    return (
+        "TI"
+        + operacao[:1]
+        + contratante[:1]
+        + nf_numero[:10].ljust(10)
+        + nf_data[:10].ljust(10)
+        + formatar_documento(empresa_doc)
+        + empresa_nome[:70].ljust(70)
+        + local_armazenamento[:1]
+    )
+
+
+def montar_pi(
+    nome: str = "PPG COATINGS BELGIUM BV SRL",
+    pais_id: str = "056",
+    endereco: str = "CHAUSSEE DE HAECHT 1465 HAACHTSESTEENWEG HAREN",
+) -> str:
+    return "PI" + nome[:70].ljust(70) + pais_id[:3].rjust(3, "0") + endereco[:70].ljust(70)
+
+
 def escrever_temporario(*linhas: str) -> Path:
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
     handle.close()
@@ -126,6 +155,53 @@ class TestTXTValidator(unittest.TestCase):
         resultado = validar_txt_siproquim_arquivo(caminho)
 
         self.assertTrue(resultado.valido, [erro.formatar() for erro in resultado.erros])
+
+    def test_destino_vazio_tn_nao_pode_ser_autorizado(self) -> None:
+        caminho = escrever_temporario(
+            EM_FIXA,
+            montar_tn(nf_numero="411574", destino_doc="", destino_nome="PPG COATINGS BELGIUM BV SRL"),
+            montar_cc(),
+        )
+        self.addCleanup(caminho.unlink, missing_ok=True)
+
+        resultado_sem_autorizacao = validar_txt_siproquim_arquivo(caminho)
+        self.assertFalse(resultado_sem_autorizacao.valido)
+
+        resultado_autorizado = validar_txt_siproquim_arquivo(
+            caminho,
+            documentos_destino_vazios_autorizados={"411574"},
+        )
+        self.assertFalse(resultado_autorizado.valido)
+        mensagens = [erro.formatar() for erro in resultado_autorizado.erros]
+        self.assertTrue(any("CPF/CNPJ Destino Carga vazio" in msg for msg in mensagens))
+
+    def test_aceita_transporte_internacional_com_pessoa_internacional(self) -> None:
+        caminho = escrever_temporario(EM_FIXA, montar_ti(), montar_pi())
+        self.addCleanup(caminho.unlink, missing_ok=True)
+
+        resultado = validar_txt_siproquim_arquivo(caminho)
+
+        self.assertTrue(resultado.valido, [erro.formatar() for erro in resultado.erros])
+
+    def test_ti_exige_subsecao_pi(self) -> None:
+        caminho = escrever_temporario(EM_FIXA, montar_ti())
+        self.addCleanup(caminho.unlink, missing_ok=True)
+
+        resultado = validar_txt_siproquim_arquivo(caminho)
+
+        self.assertFalse(resultado.valido)
+        mensagens = [erro.formatar() for erro in resultado.erros]
+        self.assertTrue(any("subsecao PI" in msg for msg in mensagens))
+
+    def test_pi_exige_pais_com_tres_digitos(self) -> None:
+        caminho = escrever_temporario(EM_FIXA, montar_ti(), montar_pi(pais_id=""))
+        self.addCleanup(caminho.unlink, missing_ok=True)
+
+        resultado = validar_txt_siproquim_arquivo(caminho)
+
+        self.assertFalse(resultado.valido)
+        mensagens = [erro.formatar() for erro in resultado.erros]
+        self.assertTrue(any("Id do pais" in msg for msg in mensagens))
 
 
 if __name__ == "__main__":

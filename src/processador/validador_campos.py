@@ -278,6 +278,9 @@ class ValidadorCampos:
         ]
         
         for chave, nome_campo in campos_cnpj:
+            if chave == 'destinatario_cnpj' and registro.get('destinatario_exterior'):
+                if not self._normalizar_documento(registro.get(chave, '')):
+                    continue
             erro = self._validar_cnpj(registro.get(chave, ''), nome_campo)
             if erro:
                 erros.append(erro)

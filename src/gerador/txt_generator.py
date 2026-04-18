@@ -19,6 +19,11 @@ from .layout_constants import (
     # Constantes CC
     CC_TAMANHO_TOTAL, CC_TAM_CTE_NUMERO, CC_TAM_DATA, CC_TAM_RECEBEDOR,
     CC_TIPO, CC_MODAL_RODOVIARIO, CC_MODAIS_VALIDOS,
+    TI_TAMANHO_TOTAL, TI_TAM_CNPJ, TI_TAM_NOME, TI_TAM_NF_NUMERO, TI_TAM_NF_DATA,
+    TI_TIPO, TI_OPERACAO_EXPORTACAO, TI_OPERACOES_VALIDAS, TI_CONTRATANTE_ORIGEM,
+    TI_CONTRATANTES_VALIDOS, TI_LOCAL_PROPRIO, TI_LOCAIS_ARMAZENAMENTO_VALIDOS,
+    LA_TAMANHO_TOTAL, LA_TIPO,
+    PI_TAMANHO_TOTAL, PI_TAM_NOME, PI_TAM_PAIS_ID, PI_TAM_ENDERECO, PI_TIPO,
     # Constantes de validação
     MES_MINIMO, MES_MAXIMO, ANO_MINIMO, ANO_MAXIMO,
     # Constantes compartilhadas
@@ -26,10 +31,44 @@ from .layout_constants import (
 )
 
 
+PAISES_INFERENCIA = {
+    "BELGIUM": "056",
+    "BELGICA": "056",
+    "BELGIQUE": "056",
+    "UNITED STATES": "840",
+    "ESTADOS UNIDOS": "840",
+    "USA": "840",
+    "ARGENTINA": "032",
+    "CHILE": "152",
+    "CHINA": "156",
+    "GERMANY": "276",
+    "ALEMANHA": "276",
+    "FRANCE": "250",
+    "FRANCA": "250",
+    "ITALY": "380",
+    "ITALIA": "380",
+    "MEXICO": "484",
+    "NETHERLANDS": "528",
+    "HOLANDA": "528",
+    "PAISES BAIXOS": "528",
+    "PARAGUAY": "600",
+    "PARAGUAI": "600",
+    "PORTUGAL": "620",
+    "SPAIN": "724",
+    "ESPANHA": "724",
+    "URUGUAY": "858",
+    "URUGUAI": "858",
+}
+
+
 class GeradorTXT:
     """Classe responsável pela geração do arquivo TXT no formato SIPROQUIM."""
     
-    def __init__(self, cnpj_rodogarcia: str):
+    def __init__(
+        self,
+        cnpj_rodogarcia: str,
+        documentos_destino_vazios_autorizados: Optional[set[str]] = None,
+    ):
         """
         Inicializa o gerador com o CNPJ da Rodogarcia.
         
@@ -37,6 +76,11 @@ class GeradorTXT:
             cnpj_rodogarcia: CNPJ da Rodogarcia (será usado na seção EM)
         """
         self.cnpj_rodogarcia = sanitizar_numerico(cnpj_rodogarcia, EM_TAM_CNPJ)
+        self.documentos_destino_vazios_autorizados = {
+            str(nf).strip()
+            for nf in (documentos_destino_vazios_autorizados or set())
+            if str(nf).strip()
+        }
 
     def _emitir_alerta(self, mensagem: str, callback_progresso=None, tipo: str = "ACAO_NECESSARIA",
                        nf_num: Optional[str] = None) -> None:
@@ -74,6 +118,9 @@ class GeradorTXT:
             EM_TIPO: EM_TAMANHO_TOTAL,
             TN_TIPO: TN_TAMANHO_TOTAL,
             CC_TIPO: CC_TAMANHO_TOTAL,
+            TI_TIPO: TI_TAMANHO_TOTAL,
+            PI_TIPO: PI_TAMANHO_TOTAL,
+            LA_TIPO: LA_TAMANHO_TOTAL,
         }
         tamanho_esperado = tamanhos.get(tipo)
         if not tamanho_esperado:
@@ -344,6 +391,180 @@ class GeradorTXT:
             )
         
         return linha
+
+    def _e_transporte_internacional(self, dados_nf: Dict) -> bool:
+        """Identifica o caso de exterior que deve sair como TI/PI, nunca como TN vazio."""
+        return bool(dados_nf.get('destinatario_exterior'))
+
+    def _normalizar_local_ti(self, valor: object) -> str:
+        texto = str(valor or TI_LOCAL_PROPRIO).strip().upper()
+        if not texto:
+            return TI_LOCAL_PROPRIO
+        return texto[0] if texto[0] in TI_LOCAIS_ARMAZENAMENTO_VALIDOS else TI_LOCAL_PROPRIO
+
+    def _normalizar_codigo_pais(self, valor: object) -> Optional[str]:
+        digitos = ''.join(filter(str.isdigit, str(valor or '')))
+        if not digitos:
+            return None
+        if len(digitos) <= PI_TAM_PAIS_ID:
+            codigo = digitos.zfill(PI_TAM_PAIS_ID)
+            return codigo if codigo != "000" else None
+        return None
+
+    def _inferir_pais_id_internacional(self, dados_nf: Dict) -> str:
+        for chave in ('destinatario_pais_id', 'pais_destino_id', 'pais_id'):
+            codigo = self._normalizar_codigo_pais(dados_nf.get(chave))
+            if codigo:
+                return codigo
+
+        textos = " ".join(
+            str(dados_nf.get(chave) or "")
+            for chave in (
+                'destinatario_pais',
+                'pais_destino',
+                'pais',
+                'destinatario_nome',
+                'destinatario_texto',
+            )
+        )
+        texto_normalizado = sanitizar_texto(textos, 1000).strip()
+        for token, codigo in PAISES_INFERENCIA.items():
+            if token in texto_normalizado:
+                return codigo
+
+        nf_num = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        raise ValueError(
+            f"NF {nf_num}: destino exterior sem Id do pais. "
+            "Informe destinatario_pais_id com 3 digitos da tabela oficial do SIPROQUIM."
+        )
+
+    def _extrair_endereco_internacional(self, dados_nf: Dict) -> str:
+        for chave in ('destinatario_endereco', 'endereco_destinatario', 'endereco_internacional'):
+            valor = str(dados_nf.get(chave) or "").strip()
+            if valor:
+                return valor
+
+        texto = str(dados_nf.get('destinatario_texto') or "")
+        match = re.search(r"END:\s*(.+?)(?:\r?\n\s*CEP:|$)", texto, re.IGNORECASE | re.DOTALL)
+        if match:
+            endereco = re.sub(r"\s+", " ", match.group(1)).strip()
+            if endereco:
+                return endereco
+
+        nf_num = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        raise ValueError(
+            f"NF {nf_num}: destino exterior sem endereco internacional. "
+            "O registro PI exige Endereco completo."
+        )
+
+    def _formatar_documento_ti(self, dados_nf: Dict, documento_raw: object, campo: str) -> str:
+        nf_num = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        documento_limpo = ''.join(filter(str.isdigit, str(documento_raw or '')))
+        if not documento_limpo:
+            raise ValueError(f"NF {nf_num}: Documento {campo} vazio no PDF.")
+        if len(documento_limpo) == 14:
+            if not validar_cnpj(documento_limpo):
+                raise ValueError(f"NF {nf_num}: CNPJ {campo} invalido: {documento_limpo}.")
+        elif len(documento_limpo) == 11:
+            if not validar_cpf(documento_limpo):
+                raise ValueError(f"NF {nf_num}: CPF {campo} invalido: {documento_limpo}.")
+        else:
+            raise ValueError(
+                f"NF {nf_num}: Documento {campo} invalido "
+                f"(deve ter 11 ou 14 digitos): {documento_limpo}."
+            )
+        return sanitizar_documento(documento_raw, TI_TAM_CNPJ, aceitar_cpf=True)
+
+    def gerar_linha_TI(self, dados_nf: Dict, callback_progresso=None) -> str:
+        """
+        Gera a linha TI (Transporte Internacional) para destinos no exterior.
+
+        No caso real da Rodogarcia, a NF e brasileira na origem e o destinatario e
+        internacional; por isso a operacao padrao e exportacao (E).
+        """
+        nf_num_display = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        operacao = str(dados_nf.get('operacao_internacional') or TI_OPERACAO_EXPORTACAO).strip().upper()[:1]
+        if operacao not in TI_OPERACOES_VALIDAS:
+            raise ValueError(f"NF {nf_num_display}: Operacao internacional invalida: {operacao}.")
+
+        contratante = str(dados_nf.get('contratante_internacional') or TI_CONTRATANTE_ORIGEM).strip().upper()[:1]
+        if contratante not in TI_CONTRATANTES_VALIDOS:
+            raise ValueError(f"NF {nf_num_display}: Contratante internacional invalido: {contratante}.")
+
+        empresa_doc_raw = dados_nf.get('empresa_cnpj') or dados_nf.get('emitente_cnpj') or dados_nf.get('contratante_cnpj')
+        empresa_nome_raw = dados_nf.get('empresa_nome') or dados_nf.get('emitente_nome') or dados_nf.get('contratante_nome')
+        empresa_doc = self._formatar_documento_ti(dados_nf, empresa_doc_raw, "Empresa")
+        empresa_nome = sanitizar_texto(empresa_nome_raw, TI_TAM_NOME)
+        if not empresa_nome.strip():
+            raise ValueError(f"NF {nf_num_display}: Nome da Empresa vazio para TI.")
+
+        nf_numero = sanitizar_alfanumerico(dados_nf.get('nf_numero'), TI_TAM_NF_NUMERO)
+        nf_data = sanitizar_texto(dados_nf.get('nf_data'), TI_TAM_NF_DATA)
+        local_armazenamento = self._normalizar_local_ti(dados_nf.get('local_armazenamento', TI_LOCAL_PROPRIO))
+
+        linha = TI_TIPO
+        linha += operacao
+        linha += contratante
+        linha += nf_numero
+        linha += nf_data
+        linha += empresa_doc
+        linha += empresa_nome
+        linha += local_armazenamento
+
+        if len(linha) != TI_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha TI deve ter exatamente {TI_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}."
+            )
+
+        self._emitir_alerta(
+            f"NF {nf_num_display}: Destinatario exterior sem CPF/CNPJ gerado como Transporte Internacional (TI/PI).",
+            callback_progresso,
+            tipo="ATENCAO",
+            nf_num=nf_num_display,
+        )
+        return linha
+
+    def gerar_linha_PI(self, dados_nf: Dict) -> str:
+        """Gera a subseção PI obrigatoria para todo TI."""
+        nf_num_display = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        nome = sanitizar_texto(
+            dados_nf.get('pessoa_internacional_nome') or dados_nf.get('destinatario_nome'),
+            PI_TAM_NOME,
+        )
+        if not nome.strip():
+            raise ValueError(f"NF {nf_num_display}: Nome da Pessoa Internacional vazio.")
+
+        pais_id = self._inferir_pais_id_internacional(dados_nf)
+        endereco = sanitizar_texto(self._extrair_endereco_internacional(dados_nf), PI_TAM_ENDERECO)
+        if not endereco.strip():
+            raise ValueError(f"NF {nf_num_display}: Endereco internacional vazio.")
+
+        linha = PI_TIPO
+        linha += nome
+        linha += pais_id
+        linha += endereco
+
+        if len(linha) != PI_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha PI deve ter exatamente {PI_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}."
+            )
+        return linha
+
+    def gerar_linha_LA(self, dados_nf: Dict) -> str:
+        """Gera LA quando um TI declarar armazenagem terceirizada."""
+        nf_num_display = str(dados_nf.get('nf_numero', '')).strip() or "N/A"
+        doc_raw = dados_nf.get('local_armazenamento_cnpj') or dados_nf.get('armazenagem_cnpj')
+        nome_raw = dados_nf.get('local_armazenamento_nome') or dados_nf.get('armazenagem_nome')
+        documento = self._formatar_documento_ti(dados_nf, doc_raw, "Armazenagem")
+        nome = sanitizar_texto(nome_raw, TI_TAM_NOME)
+        if not nome.strip():
+            raise ValueError(f"NF {nf_num_display}: Nome da Armazenagem vazio para LA.")
+        linha = LA_TIPO + documento + nome
+        if len(linha) != LA_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha LA deve ter exatamente {LA_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}."
+            )
+        return linha
     
     def gerar_linha_CC(self, dados_cte: Dict, callback_progresso=None) -> str:
         """
@@ -584,11 +805,33 @@ class GeradorTXT:
         
         # Linha EM (cabeçalho - apenas uma por arquivo)
         linhas.append(self.gerar_linha_EM(mes, ano))
+
+        def coletar_cnpjs_alerta(nf_atual: dict) -> None:
+            for chave in ('contratante_cnpj', 'emitente_cnpj', 'destinatario_cnpj', 'empresa_cnpj'):
+                documento = nf_atual.get(chave, '')
+                if documento and validar_cnpj(documento):
+                    cnpjs_validos_alertas.add(documento)
         
         # Para cada NF, gerar linha TN seguida de sua linha CC
         for nf in nfs_deduplicadas:
             if callback_cancelamento and callback_cancelamento():
                 return caminho_saida
+
+            if self._e_transporte_internacional(nf):
+                try:
+                    linhas.append(self.gerar_linha_TI(nf, callback_progresso=callback_progresso))
+                    if self._normalizar_local_ti(nf.get('local_armazenamento', TI_LOCAL_PROPRIO)) == "A":
+                        linhas.append(self.gerar_linha_LA(nf))
+                    linhas.append(self.gerar_linha_PI(nf))
+                    coletar_cnpjs_alerta(nf)
+                except ValueError as e:
+                    raise ValueError(
+                        f"Erro ao gerar linha TI/PI para NF {nf.get('nf_numero', 'N/A')}: {str(e)}"
+                    ) from e
+                if callback_cancelamento and callback_cancelamento():
+                    return caminho_saida
+                continue
+
             try:
                 linhas.append(self.gerar_linha_TN(nf, callback_progresso=callback_progresso))
             except ValueError as e:
@@ -598,16 +841,7 @@ class GeradorTXT:
                 ) from e
             
             # Coleta CNPJs para aviso (mesmo sendo válidos, podem não estar cadastrados)
-            cnpj_contratante = nf.get('contratante_cnpj', '')
-            cnpj_origem = nf.get('emitente_cnpj', '')
-            cnpj_destino = nf.get('destinatario_cnpj', '')
-            
-            if cnpj_contratante and validar_cnpj(cnpj_contratante):
-                cnpjs_validos_alertas.add(cnpj_contratante)
-            if cnpj_origem and validar_cnpj(cnpj_origem):
-                cnpjs_validos_alertas.add(cnpj_origem)
-            if cnpj_destino and validar_cnpj(cnpj_destino):
-                cnpjs_validos_alertas.add(cnpj_destino)
+            coletar_cnpjs_alerta(nf)
             
             # Se houver CTe associado, gerar linha CC
             if nf.get('cte_numero'):
@@ -642,13 +876,14 @@ class GeradorTXT:
         # CRÍTICO: Garantir que nenhuma linha contenha quebras de linha internas
         # MAS preservar os espaços de preenchimento (ljust) que são necessários para o layout
         import re
+        tipos_posicionais = (TN_TIPO, CC_TIPO, EM_TIPO, TI_TIPO, PI_TIPO, LA_TIPO)
         linhas_finais = []
         for linha in linhas:
             if callback_cancelamento and callback_cancelamento():
                 return caminho_saida
             # CRÍTICO: Para linhas TN, CC e EM, NÃO fazer strip() pois isso remove espaços de preenchimento
             # Apenas remove quebras de linha que possam ter vindo
-            if linha.startswith(TN_TIPO) or linha.startswith(CC_TIPO) or linha.startswith(EM_TIPO):
+            if str(linha).startswith(tipos_posicionais):
                 # Remove apenas quebras de linha, mas preserva espaços de preenchimento
                 linha_limpa = str(linha).replace('\n', '').replace('\r', '')
                 # Remove apenas caracteres não imprimíveis (exceto espaço)

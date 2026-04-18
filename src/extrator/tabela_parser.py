@@ -108,6 +108,14 @@ class TabelaParser:
         
         # Processa destinatário
         if dados_compartilhados['destinatario_texto']:
+            resultado['destinatario_texto'] = dados_compartilhados['destinatario_texto']
+            resultado['destinatario_exterior'] = bool(
+                re.search(
+                    r'EXTERIOR\s*-\s*EX|99999-999',
+                    dados_compartilhados['destinatario_texto'],
+                    re.IGNORECASE,
+                )
+            )
             resultado['destinatario_cnpj'] = extrair_cnpj_do_texto(dados_compartilhados['destinatario_texto'])
             resultado['destinatario_nome'] = extrair_nome_do_texto(dados_compartilhados['destinatario_texto'])
         
@@ -339,6 +347,8 @@ class TabelaParser:
                     'emitente_nome': dados_processados.get('emitente_nome'),
                     'destinatario_cnpj': dados_processados.get('destinatario_cnpj'),
                     'destinatario_nome': dados_processados.get('destinatario_nome'),
+                    'destinatario_texto': dados_processados.get('destinatario_texto'),
+                    'destinatario_exterior': dados_processados.get('destinatario_exterior', False),
                     'contratante_cnpj': dados_processados.get('contratante_cnpj'),
                     'contratante_nome': dados_processados.get('contratante_nome'),
                     'cte_numero': dados_processados.get('cte_numero'),

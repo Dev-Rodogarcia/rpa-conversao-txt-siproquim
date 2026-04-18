@@ -328,6 +328,8 @@ class ProcessadorValidacaoIntegrada:
         ]
 
         for chave_cnpj, chave_nome, tipo_pessoa in campos:
+            if chave_cnpj == 'destinatario_cnpj' and nf.get('destinatario_exterior'):
+                continue
             cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
             nome = self._normalizar_texto(nf.get(chave_nome, ''))
 
@@ -375,6 +377,12 @@ class ProcessadorValidacaoIntegrada:
         for chave_doc, tipo_pessoa, aceita_cpf in campos_documento:
             doc = self._normalizar_documento(nf.get(chave_doc, ''))
             if doc:
+                continue
+            if chave_doc == 'destinatario_cnpj' and nf.get('destinatario_exterior'):
+                self._log_gui(
+                    "INFO",
+                    f"NF {nf_num}: Destinatario exterior sem CPF/CNPJ sera exportado como TI/PI."
+                )
                 continue
 
             registrar_ajuste()

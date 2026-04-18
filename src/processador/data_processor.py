@@ -89,6 +89,8 @@ class SiproquimProcessor:
         ]
 
         for chave_cnpj, chave_nome, tipo_pessoa in campos:
+            if chave_cnpj == 'destinatario_cnpj' and nf.get('destinatario_exterior'):
+                continue
             cnpj = self._normalizar_documento(nf.get(chave_cnpj, ''))
             nome = self._normalizar_texto(nf.get(chave_nome, ''))
 

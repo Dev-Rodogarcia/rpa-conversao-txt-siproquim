@@ -30,6 +30,14 @@ EXPECTATIVAS_ARQUIVOS = {
     "frete_produtos_controlados_20260311_1624.pdf": {"tn": 46, "cc": 46},
 }
 
+DOCUMENTOS_MANUAIS_TESTE = {
+    ("frete_produtos_controlados_01.2026_CAS.pdf", "11922", "destinatario_cnpj"): "08903543000120",
+    ("frete_produtos_controlados_01.2026_CAS.pdf", "11996", "destinatario_cnpj"): "08903543000120",
+    ("frete_produtos_controlados_01.2026_SPO.pdf", "314907", "emitente_cnpj"): "10793008000610",
+    ("frete_produtos_controlados_01.2026_SPO.pdf", "2301", "destinatario_cnpj"): "48031918002500",
+    ("frete_produtos_controlados_01.2026_SPO.pdf", "6425", "destinatario_cnpj"): "37026734000150",
+}
+
 
 def _resolver_cnpj_filial(pdf_path: Path) -> str | None:
     nome = pdf_path.name.upper()
@@ -56,6 +64,26 @@ class TestPDFsConversaoSuite(unittest.TestCase):
                 def callback(etapa, detalhes):
                     eventos.append((etapa, dict(detalhes)))
 
+                def resolver_pendencias(pendencias):
+                    resposta = {"autorizadas": [], "documentos": []}
+                    for pendencia in pendencias:
+                        chave = (pdf_path.name, pendencia["nf"], pendencia["campo"])
+                        documento = DOCUMENTOS_MANUAIS_TESTE.get(chave)
+                        if documento:
+                            resposta["documentos"].append({
+                                "nf": pendencia["nf"],
+                                "campo": pendencia["campo"],
+                                "documento": documento,
+                            })
+                        elif pendencia.get("pode_autorizar_vazio"):
+                            resposta["autorizadas"].append({
+                                "nf": pendencia["nf"],
+                                "campo": pendencia["campo"],
+                            })
+                        else:
+                            self.fail(f"Pendencia sem resolucao no teste: {pendencia}")
+                    return resposta
+
                 with tempfile.TemporaryDirectory() as tmp:
                     caminho_saida = Path(tmp) / f"{pdf_path.stem}.txt"
                     processar_pdf(
@@ -65,6 +93,7 @@ class TestPDFsConversaoSuite(unittest.TestCase):
                         callback_progresso=callback,
                         mes=1,
                         ano=2026,
+                        callback_resolver_pendencias=resolver_pendencias,
                     )
 
                     resultado = validar_txt_siproquim_arquivo(caminho_saida)

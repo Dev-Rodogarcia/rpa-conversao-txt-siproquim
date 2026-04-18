@@ -46,9 +46,22 @@ def ensure_pyinstaller() -> None:
 
 
 def ensure_icon() -> Optional[Path]:
-    """Converte icon.png para icon.ico se necessario e retorna o caminho do icone."""
+    """Garante que public/icon.png usa rpa_icon_2.png e gera o .ico."""
+    icon_source = Path("rpa-icons/rpa_icon_2.png")
     icon_png = Path("public/icon.png")
     icon_ico = Path("public/icon.ico")
+
+    # Copia rpa_icon_2.png para public/icon.png se o conteudo diferir
+    if icon_source.exists():
+        needs_copy = (
+            not icon_png.exists()
+            or icon_source.stat().st_size != icon_png.stat().st_size
+        )
+        if needs_copy:
+            shutil.copy2(str(icon_source), str(icon_png))
+            if icon_ico.exists():
+                icon_ico.unlink()
+            print(f"[INFO] Icone atualizado: {icon_source} → {icon_png}")
 
     if icon_png.exists() and (not icon_ico.exists() or icon_png.stat().st_mtime > icon_ico.stat().st_mtime):
         try:
@@ -90,6 +103,8 @@ def build_app_onedir(icon_path: Optional[Path]) -> Path:
         "--windowed",
         "--clean",
         "--noconfirm",
+        "--add-data",
+        f"public{os.pathsep}public",
         "--hidden-import",
         "pdfplumber",
         "--hidden-import",

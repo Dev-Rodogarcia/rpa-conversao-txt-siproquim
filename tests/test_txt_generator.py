@@ -142,6 +142,74 @@ class TestGeradorTXT(unittest.TestCase):
         self.assertEqual(len(linha), 276)
         self.assertEqual(linha[190:204], "   14114817808")
 
+    def test_gerar_linha_tn_bloqueia_destino_vazio_sem_autorizacao(self) -> None:
+        gerador = GeradorTXT("60960473000677")
+        nf = {
+            "contratante_cnpj": "43996693000127",
+            "contratante_nome": "PPG SUM",
+            "nf_numero": "411574",
+            "nf_data": "13/03/2026",
+            "emitente_cnpj": "43996693000127",
+            "emitente_nome": "PPG SUM",
+            "destinatario_cnpj": "",
+            "destinatario_nome": "PPG COATINGS BELGIUM BV/SRL",
+            "local_retirada": "P",
+            "local_entrega": "P",
+        }
+
+        with self.assertRaises(ValueError):
+            gerador.gerar_linha_TN(nf)
+
+    def test_gerar_arquivo_exterior_gera_ti_pi_sem_tn_cc(self) -> None:
+        eventos = []
+
+        def callback(etapa, detalhes):
+            eventos.append((etapa, detalhes))
+
+        nf = {
+            "contratante_cnpj": "43996693000127",
+            "contratante_nome": "PPG SUM",
+            "nf_numero": "411574",
+            "nf_data": "13/03/2026",
+            "emitente_cnpj": "43996693000127",
+            "emitente_nome": "PPG SUM",
+            "destinatario_cnpj": "",
+            "destinatario_exterior": True,
+            "destinatario_nome": "PPG COATINGS BELGIUM BV/SRL",
+            "destinatario_texto": (
+                "DESTINATÁRIO\n"
+                "PPG COATINGS BELGIUM BV/SRL\n"
+                "CNPJ/CPF:\n"
+                "END: CHAUSSEE DE HAECHT, 1465 - HAACHTSESTEENWEG - HAREN\n"
+                "CEP: 99999-999 CIDADE: EXTERIOR - EX"
+            ),
+            "local_retirada": "P",
+            "local_entrega": "P",
+            "cte_numero": "38842",
+            "cte_data": "13/03/2026",
+            "data_entrega": "17/03/2026",
+        }
+
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+        handle.close()
+        caminho = Path(handle.name)
+        self.addCleanup(caminho.unlink, missing_ok=True)
+
+        gerador = GeradorTXT("60960473000677")
+        gerador.gerar_arquivo([nf], 3, 2026, str(caminho), callback_progresso=callback)
+
+        resultado = validar_txt_siproquim_arquivo(caminho)
+        self.assertTrue(resultado.valido, [erro.formatar() for erro in resultado.erros])
+
+        linhas = caminho.read_text(encoding="utf-8").splitlines()
+        self.assertEqual([linha[:2] for linha in linhas], ["EM", "TI", "PI"])
+        self.assertEqual(len(linhas[1]), 109)
+        self.assertEqual(len(linhas[2]), 145)
+        self.assertEqual(linhas[1][2], "E")
+        self.assertEqual(linhas[1][3], "O")
+        self.assertEqual(linhas[1][4:14].strip(), "411574")
+        self.assertEqual(linhas[2][72:75], "056")
+
 
 if __name__ == "__main__":
     unittest.main()

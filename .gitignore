@@ -21,6 +21,17 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-wheel-metadata/
+
+# Caches de ferramentas Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Virtual Environments
 .venv/
@@ -33,6 +44,9 @@ venv.bak/
 # PyInstaller
 *.manifest
 *.spec.bak
+*.toc
+*.pyz
+*.pkg
 
 # Arquivos de entrada/saída do RPA (PDFs e TXTs gerados pelo conversor)
 *.pdf
@@ -40,6 +54,10 @@ venv.bak/
 !requirements.txt
 !README.md
 !public/fonts/*.txt
+
+# Contextos e bases reais locais usados em validacao manual
+docs/contexto/
+docs/pdfs-conversao/
 
 # IDEs
 .vscode/
@@ -96,6 +114,9 @@ public/app-icon.png
 
 # Installer (Inno Setup)
 installer/output/
+*.iss.bak
+*.setup.exe
+Setup_*.exe
 
 # Mídia local (não versionar)
 assista-antes-de-usar.mp4

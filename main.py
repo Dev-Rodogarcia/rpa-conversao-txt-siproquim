@@ -11,10 +11,116 @@ from typing import Callable, Optional
 from src.extrator import ExtratorPDF
 from src.processador import SiproquimProcessor, ProcessadorValidacaoIntegrada
 from src.gerador import GeradorTXT
+from src.gerador.validators import validar_cnpj, validar_cpf
 
 
 class ProcessamentoInterrompido(RuntimeError):
     """Sinaliza uma interrupcao cooperativa solicitada pela interface."""
+
+
+def _normalizar_documento(valor: object) -> str:
+    """Retorna apenas digitos de um CPF/CNPJ."""
+    return ''.join(filter(str.isdigit, str(valor or '')))
+
+
+def _documento_valido(documento: object, aceitar_cpf: bool = True) -> bool:
+    """Valida CPF/CNPJ conforme o campo de destino do layout."""
+    doc = _normalizar_documento(documento)
+    if len(doc) == 14:
+        return validar_cnpj(doc)
+    if aceitar_cpf and len(doc) == 11:
+        return validar_cpf(doc)
+    return False
+
+
+def _coletar_pendencias_documentos(nfs: list[dict]) -> list[dict]:
+    """Coleta documentos ausentes que precisam de decisao humana antes do TXT."""
+    pendencias = []
+    campos = [
+        ("emitente_cnpj", "Origem/Emitente", False),
+        ("contratante_cnpj", "Contratante", True),
+        ("destinatario_cnpj", "Destino/Destinatario", True),
+    ]
+
+    for nf in nfs:
+        nf_num = str(nf.get("nf_numero") or "N/A").strip()
+        for chave, label, aceita_cpf in campos:
+            if _normalizar_documento(nf.get(chave)):
+                continue
+            exterior = bool(chave == "destinatario_cnpj" and nf.get("destinatario_exterior"))
+            if exterior:
+                # Destino exterior nao tem CPF/CNPJ brasileiro no TN; o gerador tratara como TI/PI.
+                continue
+            pendencias.append({
+                "nf": nf_num,
+                "campo": chave,
+                "campo_label": label,
+                "nome": nf.get(chave.replace("_cnpj", "_nome")) or "",
+                "aceita_cpf": aceita_cpf,
+                "exterior": exterior,
+                "pode_autorizar_vazio": False,
+            })
+
+    return pendencias
+
+
+def _aplicar_resolucao_documentos(
+    nfs: list[dict],
+    pendencias: list[dict],
+    resolucao: Optional[dict],
+) -> set[str]:
+    """Aplica documentos digitados e retorna NFs autorizadas com destino vazio."""
+    if not pendencias:
+        return set()
+    if not resolucao or resolucao.get("cancelado"):
+        raise ProcessamentoInterrompido("Geracao cancelada: documentos obrigatorios nao informados.")
+
+    pendencias_por_chave = {
+        (str(p["nf"]), p["campo"]): p
+        for p in pendencias
+    }
+    nfs_por_numero = {
+        str(nf.get("nf_numero") or "N/A").strip(): nf
+        for nf in nfs
+    }
+
+    autorizadas = set()
+    for item in resolucao.get("autorizadas", []):
+        nf_num = str(item.get("nf") or "").strip()
+        campo = item.get("campo")
+        pendencia = pendencias_por_chave.get((nf_num, campo))
+        if not pendencia or not pendencia.get("pode_autorizar_vazio"):
+            raise ValueError(f"Autorizacao invalida para NF {nf_num} ({campo}).")
+        autorizadas.add(nf_num)
+
+    for item in resolucao.get("documentos", []):
+        nf_num = str(item.get("nf") or "").strip()
+        campo = item.get("campo")
+        documento = _normalizar_documento(item.get("documento"))
+        pendencia = pendencias_por_chave.get((nf_num, campo))
+        if not pendencia:
+            raise ValueError(f"Documento informado para pendencia inexistente: NF {nf_num} ({campo}).")
+        if not _documento_valido(documento, aceitar_cpf=bool(pendencia.get("aceita_cpf"))):
+            esperado = "CPF ou CNPJ valido" if pendencia.get("aceita_cpf") else "CNPJ valido"
+            raise ValueError(f"NF {nf_num}: {pendencia.get('campo_label')} exige {esperado}.")
+        nfs_por_numero[nf_num][campo] = documento
+
+    faltantes = []
+    for pendencia in pendencias:
+        nf_num = str(pendencia["nf"])
+        campo = pendencia["campo"]
+        if nf_num in autorizadas and pendencia.get("pode_autorizar_vazio"):
+            continue
+        nf = nfs_por_numero.get(nf_num, {})
+        if not _normalizar_documento(nf.get(campo)):
+            faltantes.append(f"NF {nf_num} ({pendencia.get('campo_label')})")
+    if faltantes:
+        raise ProcessamentoInterrompido(
+            "Geracao cancelada: documento obrigatorio nao informado para "
+            + ", ".join(faltantes)
+        )
+
+    return autorizadas
 
 
 def extrair_mes_ano_do_pdf(caminho_pdf: str) -> tuple:
@@ -48,7 +154,8 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
                   callback_progresso=None,
                   mes: Optional[int] = None,
                   ano: Optional[int] = None,
-                  callback_cancelamento: Optional[Callable[[], bool]] = None) -> str:
+                  callback_cancelamento: Optional[Callable[[], bool]] = None,
+                  callback_resolver_pendencias: Optional[Callable[[list[dict]], dict]] = None) -> str:
     """
     Processa um arquivo PDF e gera o arquivo TXT correspondente.
     
@@ -186,6 +293,45 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
             'total_com_erros_criticos': stats.get('total_com_erros_criticos', 0),
             'total_ajustes_manuais': stats.get('total_ajustes_manuais', 0),
         })
+
+    pendencias_documentos = _coletar_pendencias_documentos(nfs_validas)
+    documentos_destino_vazios_autorizados: set[str] = set()
+    if pendencias_documentos:
+        if callback_resolver_pendencias is None:
+            descricoes = ", ".join(
+                f"NF {p['nf']} ({p['campo_label']})"
+                for p in pendencias_documentos[:5]
+            )
+            if len(pendencias_documentos) > 5:
+                descricoes += f", ... +{len(pendencias_documentos) - 5}"
+            raise ValueError(
+                "Documento obrigatorio ausente no PDF. "
+                f"Pendencias: {descricoes}."
+            )
+
+        resolucao = callback_resolver_pendencias(pendencias_documentos)
+        documentos_destino_vazios_autorizados = _aplicar_resolucao_documentos(
+            nfs_validas,
+            pendencias_documentos,
+            resolucao,
+        )
+        for nf_autorizada in sorted(documentos_destino_vazios_autorizados):
+            if callback_progresso:
+                callback_progresso('ajuste_manual', {
+                    'nf': nf_autorizada,
+                    'tipo': 'ACAO_NECESSARIA',
+                    'mensagem': (
+                        "Documento Destino ausente autorizado manualmente "
+                        "para caso de exterior."
+                    )
+                })
+                callback_progresso('processar_log', {
+                    'tipo': 'ACAO_NECESSARIA',
+                    'mensagem': (
+                        f"NF {nf_autorizada}: Documento Destino ausente autorizado "
+                        "manualmente e sera gerado em branco no TXT."
+                    )
+                })
     
     # Extrai mês e ano (usa valores fornecidos ou extrai do PDF)
     if mes is None or ano is None:
@@ -201,7 +347,10 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     _verificar_cancelamento()
     
     # Gera arquivo TXT (agora só recebe dados que o SIPROQUIM aceita)
-    gerador = GeradorTXT(cnpj_rodogarcia)
+    gerador = GeradorTXT(
+        cnpj_rodogarcia,
+        documentos_destino_vazios_autorizados=documentos_destino_vazios_autorizados,
+    )
     caminho_gerado = gerador.gerar_arquivo(
         nfs_validas,
         mes,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -34,11 +35,13 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -77,7 +80,16 @@ from .progress_manager import ProgressManager
 from .validators import FormValidator, somente_digitos
 from .utils import downloads_dir, extrair_ano_padrao, extrair_mes_padrao, gerar_nome_arquivo_saida
 from src.gerador.layout_constants import CNPJ_TAMANHO
+from src.gerador.validators import validar_cnpj, validar_cpf
 from src.processador.aprendizado_store import AprendizadoStore
+
+
+def _recursos_dir() -> Path:
+    """Retorna o diretório raiz de recursos (funciona em dev e no app compilado)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parents[2]
+
 
 # ---------------------------------------------------------------------------
 # Paleta de cores (modo claro)
@@ -386,7 +398,7 @@ class JanelaConversor(QMainWindow):
         self.resize(1450, 960)
         self.setMinimumSize(UIConstants.WINDOW_MIN_WIDTH, UIConstants.WINDOW_MIN_HEIGHT)
 
-        icon_path = Path(__file__).resolve().parents[2] / "public" / "icon.ico"
+        icon_path = _recursos_dir() / "public" / "icon.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -717,6 +729,47 @@ class JanelaConversor(QMainWindow):
             }}
 
             /* ── Botão de tema ── */
+            /* Dialogos e popups */
+            QMessageBox,
+            QInputDialog,
+            QDialog {{
+                background: {p['branco']};
+                color: {p['texto_padrao']};
+            }}
+            QMessageBox QLabel,
+            QInputDialog QLabel,
+            QDialog QLabel {{
+                color: {p['texto_padrao']};
+                background: transparent;
+            }}
+            QMessageBox QPushButton,
+            QInputDialog QPushButton,
+            QDialog QPushButton {{
+                background: {p['btn_pri_bg']};
+                color: {p['btn_pri_text']};
+                border: 1px solid {p['borda_forte']};
+                border-radius: 8px;
+                padding: 7px 16px;
+                min-width: 78px;
+                font-weight: 700;
+            }}
+            QMessageBox QPushButton:hover,
+            QInputDialog QPushButton:hover,
+            QDialog QPushButton:hover {{
+                background: {p['btn_pri_hover']};
+            }}
+            QMessageBox QLineEdit,
+            QInputDialog QLineEdit,
+            QDialog QLineEdit {{
+                background: {p['input_bg']};
+                color: {p['texto_padrao']};
+                border: 2px solid {p['input_border']};
+                border-radius: 8px;
+                padding: 6px 10px;
+                selection-background-color: {p['primaria']};
+                selection-color: {p['btn_pri_text']};
+            }}
+
             QPushButton#botaoTema {{
                 background: {p['superficie_alt']};
                 color: {p['texto_padrao']};
@@ -730,6 +783,100 @@ class JanelaConversor(QMainWindow):
             }}
         """
         self.setStyleSheet(qss)
+
+    def _estilo_dialogo(self) -> str:
+        p = self._paleta_atual
+        return f"""
+            QDialog, QMessageBox, QInputDialog {{
+                background: {p['branco']};
+                color: {p['texto_padrao']};
+            }}
+            QLabel {{
+                color: {p['texto_padrao']};
+                background: transparent;
+                font-size: 13px;
+            }}
+            QLineEdit {{
+                background: {p['input_bg']};
+                color: {p['texto_padrao']};
+                border: 2px solid {p['input_border']};
+                border-radius: 8px;
+                padding: 7px 10px;
+                min-height: 30px;
+                selection-background-color: {p['primaria']};
+                selection-color: {p['btn_pri_text']};
+            }}
+            QLineEdit:focus {{
+                border-color: {p['input_focus']};
+            }}
+            QPushButton {{
+                background: {p['btn_pri_bg']};
+                color: {p['btn_pri_text']};
+                border: 1px solid {p['borda_forte']};
+                border-radius: 8px;
+                padding: 7px 16px;
+                min-width: 78px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: {p['btn_pri_hover']};
+            }}
+            QPushButton:pressed {{
+                background: {p['primaria_pressed']};
+            }}
+        """
+
+    def _preparar_dialogo(self, dialogo: QDialog) -> QDialog:
+        dialogo.setStyleSheet(self._estilo_dialogo())
+        if not self.windowIcon().isNull():
+            dialogo.setWindowIcon(self.windowIcon())
+        return dialogo
+
+    def _mostrar_mensagem_qt(
+        self,
+        icone: QMessageBox.Icon,
+        titulo: str,
+        mensagem: str,
+        botoes=QMessageBox.Ok,
+        botao_padrao=QMessageBox.Ok,
+    ):
+        dialogo = QMessageBox(self)
+        dialogo.setIcon(icone)
+        dialogo.setWindowTitle(titulo)
+        dialogo.setText(mensagem)
+        dialogo.setStandardButtons(botoes)
+        dialogo.setDefaultButton(botao_padrao)
+        self._preparar_dialogo(dialogo)
+        return dialogo.exec()
+
+    def _mostrar_aviso(self, titulo: str, mensagem: str):
+        return self._mostrar_mensagem_qt(QMessageBox.Warning, titulo, mensagem)
+
+    def _mostrar_erro_popup(self, titulo: str, mensagem: str):
+        return self._mostrar_mensagem_qt(QMessageBox.Critical, titulo, mensagem)
+
+    def _mostrar_info(self, titulo: str, mensagem: str):
+        return self._mostrar_mensagem_qt(QMessageBox.Information, titulo, mensagem)
+
+    def _perguntar_popup(self, titulo: str, mensagem: str) -> bool:
+        resposta = self._mostrar_mensagem_qt(
+            QMessageBox.Question,
+            titulo,
+            mensagem,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return resposta == QMessageBox.Yes
+
+    def _pedir_texto_popup(self, titulo: str, mensagem: str) -> tuple[str, bool]:
+        dialogo = QInputDialog(self)
+        dialogo.setWindowTitle(titulo)
+        dialogo.setLabelText(mensagem)
+        dialogo.setInputMode(QInputDialog.TextInput)
+        dialogo.setTextEchoMode(QLineEdit.Normal)
+        self._preparar_dialogo(dialogo)
+        ok = dialogo.exec() == QDialog.Accepted
+        return dialogo.textValue(), ok
 
     # ------------------------------------------------------------------
     # Montagem da interface
@@ -779,7 +926,7 @@ class JanelaConversor(QMainWindow):
 
         self._logo_lbl = QLabel()
         self._logo_lbl.setAlignment(Qt.AlignVCenter)
-        logo_path = Path(__file__).resolve().parents[2] / "public" / "logo.png"
+        logo_path = _recursos_dir() / "public" / "logo.png"
         if logo_path.exists():
             px = QPixmap(str(logo_path))
             if not px.isNull():
@@ -1521,8 +1668,10 @@ class JanelaConversor(QMainWindow):
         if not valido:
             if self._historico_mgr:
                 self._historico_mgr.adicionar_aviso(f"CNPJ invalido: {erro}")
-            QMessageBox.warning(self, UIConstants.DIALOG_TITLE_AVISO,
-                                UIConstants.TEXT_AVISO_CNPJ_DIGITOS.format(digitos=CNPJ_TAMANHO))
+            self._mostrar_aviso(
+                UIConstants.DIALOG_TITLE_AVISO,
+                UIConstants.TEXT_AVISO_CNPJ_DIGITOS.format(digitos=CNPJ_TAMANHO),
+            )
             return
         try:
             nome = self._filiais_manager.buscar_por_cnpj(cnpj)
@@ -1540,7 +1689,7 @@ class JanelaConversor(QMainWindow):
                 self.lbl_filial_info.setText(UIConstants.TEXT_AVISO_CNPJ_NAO_ENCONTRADO.format(cnpj=cnpj))
             self._verificar_habilitar_botao()
         except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Erro ao buscar filial: {e}")
+            self._mostrar_erro_popup("Erro", f"Erro ao buscar filial: {e}")
 
     def _on_filial_selecionada(self, choice: str) -> None:
         if choice and choice != UIConstants.PLACEHOLDER_COMBO_FILIAL:
@@ -1575,7 +1724,7 @@ class JanelaConversor(QMainWindow):
     # ------------------------------------------------------------------
     def _on_aprender_txt(self) -> None:
         if not self._aprendizado_store:
-            QMessageBox.critical(self, UIConstants.DIALOG_TITLE_ERRO, "Memoria de aprendizado indisponivel.")
+            self._mostrar_erro_popup(UIConstants.DIALOG_TITLE_ERRO, "Memoria de aprendizado indisponivel.")
             return
         if self._is_busy:
             if self._historico_mgr:
@@ -1609,20 +1758,24 @@ class JanelaConversor(QMainWindow):
 
             def _dialogo(r=resultado, rep=replay):
                 if rep:
-                    QMessageBox.information(self, UIConstants.DIALOG_TITLE_SUCESSO,
-                        f"Aprendizado ignorado: arquivo ja processado.\nMemoria: {r.get('arquivo_db', '')}")
+                    self._mostrar_info(
+                        UIConstants.DIALOG_TITLE_SUCESSO,
+                        f"Aprendizado ignorado: arquivo ja processado.\nMemoria: {r.get('arquivo_db', '')}",
+                    )
                 else:
-                    QMessageBox.information(self, UIConstants.DIALOG_TITLE_SUCESSO,
+                    self._mostrar_info(
+                        UIConstants.DIALOG_TITLE_SUCESSO,
                         f"Aprendizado concluido!\n"
                         f"Novos pares: {r.get('aprendidos_novos', 0)}\n"
                         f"Promovidos: {r.get('promovidos', 0)}\n"
-                        f"Memoria: {r.get('arquivo_db', '')}")
+                        f"Memoria: {r.get('arquivo_db', '')}",
+                    )
             self._depois(_dialogo)
         except Exception as exc:
             m = f"Falha ao aprender com TXT: {exc}"
             self._depois(lambda msg=m: self._historico_mgr and self._historico_mgr.adicionar_erro(msg, origem="Memória"))
             self._depois(lambda: self._set_status("Falha no aprendizado."))
-            self._depois(lambda msg=m: QMessageBox.critical(self, UIConstants.DIALOG_TITLE_ERRO, msg))
+            self._depois(lambda msg=m: self._mostrar_erro_popup(UIConstants.DIALOG_TITLE_ERRO, msg))
         finally:
             self._depois(lambda: self._set_aprendizado_busy(False))
 
@@ -1661,7 +1814,7 @@ class JanelaConversor(QMainWindow):
             except Exception:
                 subprocess.run(["explorer", str(pasta)])
         except Exception as exc:
-            QMessageBox.critical(self, UIConstants.DIALOG_TITLE_ERRO, f"Falha ao abrir pasta: {exc}")
+            self._mostrar_erro_popup(UIConstants.DIALOG_TITLE_ERRO, f"Falha ao abrir pasta: {exc}")
 
     def _set_aprendizado_busy(self, busy: bool) -> None:
         self._is_busy = busy
@@ -1706,7 +1859,7 @@ class JanelaConversor(QMainWindow):
         if not valido:
             if self._historico_mgr:
                 self._historico_mgr.adicionar_erro(f"Validacao falhou: {erro_msg}")
-            QMessageBox.critical(self, "Erro", erro_msg or UIConstants.TEXT_ERRO_PDF_INVALIDO)
+            self._mostrar_erro_popup("Erro", erro_msg or UIConstants.TEXT_ERRO_PDF_INVALIDO)
             return
 
         if self._historico_mgr:
@@ -1765,6 +1918,73 @@ class JanelaConversor(QMainWindow):
         self._set_status("Cancelamento solicitado — aguardando etapa atual...")
         if self._historico_mgr:
             self._historico_mgr.adicionar_aviso("Cancelamento solicitado pelo usuario.")
+
+    def _documento_valido_pendencia(self, documento: str, aceita_cpf: bool) -> bool:
+        digitos = somente_digitos(documento)
+        if len(digitos) == 14:
+            return validar_cnpj(digitos)
+        if aceita_cpf and len(digitos) == 11:
+            return validar_cpf(digitos)
+        return False
+
+    def _resolver_pendencias_documentos(self, pendencias: list[dict]) -> dict:
+        evento = threading.Event()
+        resultado: dict = {"valor": {"cancelado": True}}
+
+        def executar_popup() -> None:
+            resposta = {"autorizadas": [], "documentos": []}
+            try:
+                for pendencia in pendencias:
+                    nf = str(pendencia.get("nf", "N/A"))
+                    campo = pendencia.get("campo")
+                    label = pendencia.get("campo_label", "Documento")
+                    nome = pendencia.get("nome") or "Nome nao identificado"
+
+                    if pendencia.get("pode_autorizar_vazio"):
+                        msg = (
+                            f"NF {nf}: {label} sem CPF/CNPJ no PDF.\n\n"
+                            f"Nome: {nome}\n\n"
+                            "O PDF indica destino no exterior. Deseja gerar o TXT mantendo "
+                            "o campo CPF/CNPJ Destino em branco para esta NF?"
+                        )
+                        if not self._perguntar_popup("Autorizar documento vazio", msg):
+                            resposta["cancelado"] = True
+                            break
+                        resposta["autorizadas"].append({"nf": nf, "campo": campo})
+                        continue
+
+                    esperado = "CPF/CNPJ" if pendencia.get("aceita_cpf") else "CNPJ"
+                    while True:
+                        msg = (
+                            f"NF {nf}: {label} nacional com documento nao extraido.\n\n"
+                            f"Nome: {nome}\n\n"
+                            f"Informe o {esperado} para continuar ou cancele a geracao."
+                        )
+                        valor, ok = self._pedir_texto_popup("Documento obrigatorio", msg)
+                        if not ok:
+                            resposta["cancelado"] = True
+                            break
+                        digitos = somente_digitos(valor)
+                        if self._documento_valido_pendencia(digitos, bool(pendencia.get("aceita_cpf"))):
+                            resposta["documentos"].append({
+                                "nf": nf,
+                                "campo": campo,
+                                "documento": digitos,
+                            })
+                            break
+                        self._mostrar_erro_popup(
+                            "Documento invalido",
+                            f"Informe um {esperado} valido para a NF {nf}.",
+                        )
+                    if resposta.get("cancelado"):
+                        break
+            finally:
+                resultado["valor"] = resposta
+                evento.set()
+
+        self._depois(executar_popup)
+        evento.wait()
+        return resultado["valor"]
 
     def _run_conversion(self, pdf: str, cnpj: str, saida_path: str, mes: int, ano: int) -> None:
         mgr = self._historico_mgr
@@ -1883,6 +2103,7 @@ class JanelaConversor(QMainWindow):
                 callback_progresso=cb,
                 mes=mes, ano=ano,
                 callback_cancelamento=lambda: self._flag_cancelamento,
+                callback_resolver_pendencias=self._resolver_pendencias_documentos,
             )
             self._depois(self._log_resumo_analista)
             self._depois(self._log_relatorio_final)
@@ -1947,14 +2168,16 @@ class JanelaConversor(QMainWindow):
         self._atualizar_progresso(UIConstants.PROGRESSO_COMPLETO, "Lote finalizado.")
         caminho_abs = Path(caminho).absolute()
         if tem_criticos:
-            QMessageBox.warning(self, UIConstants.DIALOG_TITLE_AVISO,
+            self._mostrar_aviso(
+                UIConstants.DIALOG_TITLE_AVISO,
                 f"Arquivo gerado com pendencias criticas.\nRevise o log antes de enviar ao SIPROQUIM.\n\n"
-                f"{UIConstants.TEXT_SUCESSO_ARQUIVO_SALVO}\n{caminho_abs}")
-        resp = QMessageBox.question(
-            self, UIConstants.DIALOG_TITLE_SUCESSO,
+                f"{UIConstants.TEXT_SUCESSO_ARQUIVO_SALVO}\n{caminho_abs}",
+            )
+        abrir_downloads = self._perguntar_popup(
+            UIConstants.DIALOG_TITLE_SUCESSO,
             f"{UIConstants.TEXT_SUCESSO_ARQUIVO_SALVO}\n{caminho_abs}\n\n{UIConstants.TEXT_SUCESSO_ABRIR_DOWNLOADS}",
-            QMessageBox.Yes | QMessageBox.No)
-        if resp == QMessageBox.Yes:
+        )
+        if abrir_downloads:
             try:
                 os.startfile(downloads_dir())
             except Exception:
@@ -1965,8 +2188,10 @@ class JanelaConversor(QMainWindow):
         self._set_status(UIConstants.TEXT_ERRO_CONVERSAO)
         self._atualizar_progresso(0.0, "Falha no processamento. Consulte o historico.")
         self.lbl_tempo.setText("")
-        QMessageBox.critical(self, UIConstants.DIALOG_TITLE_ERRO,
-                             UIConstants.TEXT_ERRO_DETALHES.format(erro=erro))
+        self._mostrar_erro_popup(
+            UIConstants.DIALOG_TITLE_ERRO,
+            UIConstants.TEXT_ERRO_DETALHES.format(erro=erro),
+        )
 
     def _on_interrompido(self) -> None:
         self._set_busy(False)
@@ -2258,7 +2483,7 @@ class JanelaConversor(QMainWindow):
 # Bootstrap
 # ===========================================================================
 def _configurar_fonte(app: QApplication) -> None:
-    fonte_path = Path(__file__).resolve().parents[2] / "public" / "fonts" / "Manrope-Variable.ttf"
+    fonte_path = _recursos_dir() / "public" / "fonts" / "Manrope-Variable.ttf"
     if fonte_path.exists():
         fid = QFontDatabase.addApplicationFont(str(fonte_path))
         familias = QFontDatabase.applicationFontFamilies(fid)
@@ -2279,7 +2504,6 @@ def _configurar_fonte(app: QApplication) -> None:
 
 def criar_app_qt() -> tuple["QApplication", "JanelaConversor"]:
     """Cria e configura o QApplication + JanelaConversor."""
-    import sys
     from PySide6.QtCore import Qt
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -2290,7 +2514,7 @@ def criar_app_qt() -> tuple["QApplication", "JanelaConversor"]:
     app.setStyle("Fusion")
     _configurar_fonte(app)
 
-    caminho_icone = Path(__file__).resolve().parents[2] / "public" / "icon.ico"
+    caminho_icone = _recursos_dir() / "public" / "icon.ico"
     if caminho_icone.exists():
         app.setWindowIcon(QIcon(str(caminho_icone)))
 

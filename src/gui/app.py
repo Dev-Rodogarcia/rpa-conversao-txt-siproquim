@@ -12,7 +12,7 @@ import traceback
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from tkinter import StringVar, filedialog, messagebox
+from tkinter import StringVar, filedialog, messagebox, simpledialog
 from typing import Optional
 import customtkinter as ctk
 
@@ -49,6 +49,7 @@ from .layout_builder import (
 )
 from .utils import downloads_dir, gerar_nome_arquivo_saida, extrair_ano_padrao, extrair_mes_padrao
 from src.gerador.layout_constants import CNPJ_TAMANHO  # Constante compartilhada
+from src.gerador.validators import validar_cnpj, validar_cpf
 from src.processador.aprendizado_store import AprendizadoStore
 
 # Configurações Globais de Tema
@@ -1510,6 +1511,74 @@ class App(ctk.CTk):
             for aviso in self._avisos_gerais:
                 self._log_manager.adicionar(aviso, "ALERTA")
 
+    def _documento_valido_pendencia(self, documento: str, aceita_cpf: bool) -> bool:
+        digitos = somente_digitos(documento)
+        if len(digitos) == 14:
+            return validar_cnpj(digitos)
+        if aceita_cpf and len(digitos) == 11:
+            return validar_cpf(digitos)
+        return False
+
+    def _resolver_pendencias_documentos(self, pendencias: list[dict]) -> dict:
+        """Mostra popups sincronizados com a thread principal para resolver documentos ausentes."""
+        evento = threading.Event()
+        resultado: dict = {"valor": {"cancelado": True}}
+
+        def executar_popup() -> None:
+            resposta = {"autorizadas": [], "documentos": []}
+            try:
+                for pendencia in pendencias:
+                    nf = str(pendencia.get("nf", "N/A"))
+                    campo = pendencia.get("campo")
+                    label = pendencia.get("campo_label", "Documento")
+                    nome = pendencia.get("nome") or "Nome nao identificado"
+
+                    if pendencia.get("pode_autorizar_vazio"):
+                        msg = (
+                            f"NF {nf}: {label} sem CPF/CNPJ no PDF.\n\n"
+                            f"Nome: {nome}\n\n"
+                            "O PDF indica destino no exterior. Deseja gerar o TXT mantendo "
+                            "o campo CPF/CNPJ Destino em branco para esta NF?"
+                        )
+                        if not messagebox.askyesno("Autorizar documento vazio", msg):
+                            resposta["cancelado"] = True
+                            break
+                        resposta["autorizadas"].append({"nf": nf, "campo": campo})
+                        continue
+
+                    esperado = "CPF/CNPJ" if pendencia.get("aceita_cpf") else "CNPJ"
+                    while True:
+                        msg = (
+                            f"NF {nf}: {label} nacional com documento nao extraido.\n\n"
+                            f"Nome: {nome}\n\n"
+                            f"Informe o {esperado} para continuar ou cancele a geracao."
+                        )
+                        valor = simpledialog.askstring("Documento obrigatorio", msg, parent=self)
+                        if valor is None:
+                            resposta["cancelado"] = True
+                            break
+                        digitos = somente_digitos(valor)
+                        if self._documento_valido_pendencia(digitos, bool(pendencia.get("aceita_cpf"))):
+                            resposta["documentos"].append({
+                                "nf": nf,
+                                "campo": campo,
+                                "documento": digitos,
+                            })
+                            break
+                        messagebox.showerror(
+                            "Documento invalido",
+                            f"Informe um {esperado} valido para a NF {nf}.",
+                        )
+                    if resposta.get("cancelado"):
+                        break
+            finally:
+                resultado["valor"] = resposta
+                evento.set()
+
+        self.after(0, executar_popup)
+        evento.wait()
+        return resultado["valor"]
+
     def _run_conversion(self, pdf, cnpj, saida_path, mes, ano):
         """Executa a conversao do PDF em thread separada."""
         try:
@@ -1633,7 +1702,8 @@ class App(ctk.CTk):
             caminho_final = processar_pdf(
                 pdf, cnpj, saida_path,
                 callback_progresso=callback_progresso,
-                mes=mes, ano=ano
+                mes=mes, ano=ano,
+                callback_resolver_pendencias=self._resolver_pendencias_documentos,
             )
             self.after(0, self._log_resumo_analista)
             self.after(0, self._log_relatorio_final)

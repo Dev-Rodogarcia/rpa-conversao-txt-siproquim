@@ -272,6 +272,9 @@ class ExtratorPDF:
         registro['emitente_nome'] = extrair_nome_apos_label('EMITENTE', contexto)
         registro['destinatario_nome'] = extrair_nome_apos_label('DESTINAT[ÁA]RIO', contexto)
         registro['contratante_nome'] = extrair_nome_apos_label('CONTRANTE', contexto)
+        registro['destinatario_exterior'] = bool(
+            re.search(r'EXTERIOR\s*-\s*EX|99999-999', contexto, re.IGNORECASE)
+        )
         
         # Fallbacks
         if not registro.get('contratante_cnpj') or registro.get('contratante_cnpj') == CNPJ_VAZIO:

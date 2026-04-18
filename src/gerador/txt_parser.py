@@ -18,6 +18,20 @@ from .layout_constants import (
     CC_POS_RECEBEDOR,
     CC_TAMANHO_TOTAL,
     CC_TIPO,
+    PI_POS_ENDERECO,
+    PI_POS_NOME_EMPRESA,
+    PI_POS_PAIS_ID,
+    PI_TAMANHO_TOTAL,
+    PI_TIPO,
+    TI_POS_CNPJ_EMPRESA,
+    TI_POS_CONTRATANTE,
+    TI_POS_LOCAL_ARMAZENAMENTO,
+    TI_POS_NF_DATA,
+    TI_POS_NF_NUMERO,
+    TI_POS_NOME_EMPRESA,
+    TI_POS_OPERACAO,
+    TI_TAMANHO_TOTAL,
+    TI_TIPO,
     TN_POS_CNPJ_CONTRATANTE,
     TN_POS_CNPJ_DESTINO,
     TN_POS_CNPJ_ORIGEM,
@@ -96,6 +110,32 @@ def _parse_cc(linha: str, numero_linha: int) -> Dict[str, str]:
     }
 
 
+def _parse_ti(linha: str, numero_linha: int) -> Dict[str, str]:
+    linha_norm = linha if len(linha) >= TI_TAMANHO_TOTAL else linha.ljust(TI_TAMANHO_TOTAL)
+    return {
+        "tipo": TI_TIPO,
+        "linha_numero": str(numero_linha),
+        "operacao": _slice_posicional(linha_norm, TI_POS_OPERACAO).strip(),
+        "contratante": _slice_posicional(linha_norm, TI_POS_CONTRATANTE).strip(),
+        "nf_numero": _slice_posicional(linha_norm, TI_POS_NF_NUMERO).strip(),
+        "nf_data": _slice_posicional(linha_norm, TI_POS_NF_DATA).strip(),
+        "empresa_cnpj": _somente_digitos(_slice_posicional(linha_norm, TI_POS_CNPJ_EMPRESA)),
+        "empresa_nome": _slice_posicional(linha_norm, TI_POS_NOME_EMPRESA).strip(),
+        "local_armazenamento": _slice_posicional(linha_norm, TI_POS_LOCAL_ARMAZENAMENTO).strip(),
+    }
+
+
+def _parse_pi(linha: str, numero_linha: int) -> Dict[str, str]:
+    linha_norm = linha if len(linha) >= PI_TAMANHO_TOTAL else linha.ljust(PI_TAMANHO_TOTAL)
+    return {
+        "tipo": PI_TIPO,
+        "linha_numero": str(numero_linha),
+        "nome_empresa": _slice_posicional(linha_norm, PI_POS_NOME_EMPRESA).strip(),
+        "pais_id": _slice_posicional(linha_norm, PI_POS_PAIS_ID).strip(),
+        "endereco": _slice_posicional(linha_norm, PI_POS_ENDERECO).strip(),
+    }
+
+
 def parse_txt_siproquim(caminho_txt: str) -> Dict[str, object]:
     """
     Faz parse de TXT SIPROQUIM e retorna dados estruturados.
@@ -110,6 +150,8 @@ def parse_txt_siproquim(caminho_txt: str) -> Dict[str, object]:
     linhas = _ler_linhas(caminho_txt)
     tn: List[Dict[str, str]] = []
     cc: List[Dict[str, str]] = []
+    ti: List[Dict[str, str]] = []
+    pi: List[Dict[str, str]] = []
     invalidas: List[Dict[str, object]] = []
 
     for idx, linha in enumerate(linhas, start=1):
@@ -126,8 +168,18 @@ def parse_txt_siproquim(caminho_txt: str) -> Dict[str, object]:
                 cc.append(_parse_cc(linha, idx))
             except Exception as exc:
                 invalidas.append({"linha_numero": idx, "motivo": f"Falha parse CC: {exc}"})
+        elif prefixo == TI_TIPO:
+            try:
+                ti.append(_parse_ti(linha, idx))
+            except Exception as exc:
+                invalidas.append({"linha_numero": idx, "motivo": f"Falha parse TI: {exc}"})
+        elif prefixo == PI_TIPO:
+            try:
+                pi.append(_parse_pi(linha, idx))
+            except Exception as exc:
+                invalidas.append({"linha_numero": idx, "motivo": f"Falha parse PI: {exc}"})
 
-    return {"tn": tn, "cc": cc, "invalidas": invalidas}
+    return {"tn": tn, "cc": cc, "ti": ti, "pi": pi, "invalidas": invalidas}
 
 
 def parse_primeira_nf(caminho_txt: str) -> Optional[str]:

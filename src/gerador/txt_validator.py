@@ -23,13 +23,32 @@ from .layout_constants import (
     CC_TIPO,
     EM_TAMANHO_TOTAL,
     EM_TIPO,
+    LA_TAMANHO_TOTAL,
+    LA_TIPO,
     LE_TAMANHO_TOTAL,
     LE_TIPO,
     LR_TAMANHO_TOTAL,
     LR_TIPO,
+    PI_POS_ENDERECO,
+    PI_POS_NOME_EMPRESA,
+    PI_POS_PAIS_ID,
+    PI_TAMANHO_TOTAL,
+    PI_TIPO,
+    TI_CONTRATANTES_VALIDOS,
+    TI_LOCAIS_ARMAZENAMENTO_VALIDOS,
+    TI_OPERACOES_VALIDAS,
+    TI_POS_CNPJ_EMPRESA,
+    TI_POS_CONTRATANTE,
+    TI_POS_LOCAL_ARMAZENAMENTO,
+    TI_POS_NF_NUMERO,
+    TI_POS_NOME_EMPRESA,
+    TI_POS_OPERACAO,
+    TI_TAMANHO_TOTAL,
+    TI_TIPO,
     TN_POS_CNPJ_CONTRATANTE,
     TN_POS_CNPJ_DESTINO,
     TN_POS_CNPJ_ORIGEM,
+    TN_POS_NF_NUMERO,
     TN_TAMANHO_TOTAL,
     TN_TIPO,
 )
@@ -161,7 +180,85 @@ def _validar_documento_tn_campo(raw: str, campo: str, aceita_cpf: bool) -> str |
     return f"{campo} deve conter {doc_esperado} apos remover espacos."
 
 
-def _validar_linha_basica(numero_linha: int, linha: str) -> tuple[_RegistroLinha, list[ErroLayoutTXT]]:
+def _validar_linha_ti(numero_linha: int, linha: str) -> list[ErroLayoutTXT]:
+    erros: List[ErroLayoutTXT] = []
+    if len(linha) != TI_TAMANHO_TOTAL:
+        erros.append(
+            ErroLayoutTXT(numero_linha, TI_TIPO, f"tamanho invalido: {len(linha)} caracteres (esperado {TI_TAMANHO_TOTAL}).")
+        )
+        return erros
+
+    operacao = _slice_posicional(linha, TI_POS_OPERACAO)
+    contratante = _slice_posicional(linha, TI_POS_CONTRATANTE)
+    local_armazenamento = _slice_posicional(linha, TI_POS_LOCAL_ARMAZENAMENTO)
+
+    if operacao not in TI_OPERACOES_VALIDAS:
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, f"Operacao invalida: '{operacao}'. Use E ou I."))
+    if contratante not in TI_CONTRATANTES_VALIDOS:
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, f"Contratante invalido: '{contratante}'. Use O ou D."))
+    if not _slice_posicional(linha, TI_POS_NF_NUMERO).strip():
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, "Numero NF vazio."))
+    if not _slice_posicional(linha, TI_POS_NOME_EMPRESA).strip():
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, "Nome da Empresa vazio."))
+
+    erro_doc = _validar_documento_tn_campo(
+        _slice_posicional(linha, TI_POS_CNPJ_EMPRESA),
+        "CPF/CNPJ Empresa",
+        aceita_cpf=True,
+    )
+    if erro_doc:
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, erro_doc))
+
+    if local_armazenamento not in TI_LOCAIS_ARMAZENAMENTO_VALIDOS:
+        erros.append(ErroLayoutTXT(numero_linha, TI_TIPO, f"Local de Armazenamento invalido: '{local_armazenamento}'. Use apenas P ou A."))
+
+    return erros
+
+
+def _validar_linha_pi(numero_linha: int, linha: str) -> list[ErroLayoutTXT]:
+    erros: List[ErroLayoutTXT] = []
+    if len(linha) != PI_TAMANHO_TOTAL:
+        erros.append(
+            ErroLayoutTXT(numero_linha, PI_TIPO, f"tamanho invalido: {len(linha)} caracteres (esperado {PI_TAMANHO_TOTAL}).")
+        )
+        return erros
+
+    nome = _slice_posicional(linha, PI_POS_NOME_EMPRESA).strip()
+    pais_id = _slice_posicional(linha, PI_POS_PAIS_ID)
+    endereco = _slice_posicional(linha, PI_POS_ENDERECO).strip()
+
+    if not nome:
+        erros.append(ErroLayoutTXT(numero_linha, PI_TIPO, "Nome Empresa vazio."))
+    if not pais_id.isdigit() or pais_id == "000":
+        erros.append(ErroLayoutTXT(numero_linha, PI_TIPO, "Id do pais invalido; use 3 digitos da tabela oficial."))
+    if not endereco:
+        erros.append(ErroLayoutTXT(numero_linha, PI_TIPO, "Endereco completo vazio."))
+
+    return erros
+
+
+def _validar_linha_la(numero_linha: int, linha: str) -> list[ErroLayoutTXT]:
+    erros: List[ErroLayoutTXT] = []
+    if len(linha) != LA_TAMANHO_TOTAL:
+        erros.append(
+            ErroLayoutTXT(numero_linha, LA_TIPO, f"tamanho invalido: {len(linha)} caracteres (esperado {LA_TAMANHO_TOTAL}).")
+        )
+        return erros
+
+    erro_doc = _validar_documento_tn_campo(linha[2:16], "CPF/CNPJ Empresa", aceita_cpf=True)
+    if erro_doc:
+        erros.append(ErroLayoutTXT(numero_linha, LA_TIPO, erro_doc))
+    if not linha[16:86].strip():
+        erros.append(ErroLayoutTXT(numero_linha, LA_TIPO, "Nome Empresa vazio."))
+
+    return erros
+
+
+def _validar_linha_basica(
+    numero_linha: int,
+    linha: str,
+    documentos_destino_vazios_autorizados: set[str] | None = None,
+) -> tuple[_RegistroLinha, list[ErroLayoutTXT]]:
     tipo = linha[:2].upper() if len(linha) >= 2 else ""
     erros: List[ErroLayoutTXT] = []
 
@@ -239,11 +336,17 @@ def _validar_linha_basica(numero_linha: int, linha: str) -> tuple[_RegistroLinha
             erros.append(
                 ErroLayoutTXT(numero_linha, tipo, f"tamanho invalido: {len(linha)} caracteres (esperado {LR_TAMANHO_TOTAL}).")
             )
+    elif tipo == LA_TIPO:
+        erros.extend(_validar_linha_la(numero_linha, linha))
     elif tipo == LE_TIPO:
         if len(linha) != LE_TAMANHO_TOTAL:
             erros.append(
                 ErroLayoutTXT(numero_linha, tipo, f"tamanho invalido: {len(linha)} caracteres (esperado {LE_TAMANHO_TOTAL}).")
             )
+    elif tipo == TI_TIPO:
+        erros.extend(_validar_linha_ti(numero_linha, linha))
+    elif tipo == PI_TIPO:
+        erros.extend(_validar_linha_pi(numero_linha, linha))
     else:
         erros.append(ErroLayoutTXT(numero_linha, tipo, f"tipo de linha desconhecido: '{tipo or linha[:10]}'."))
 
@@ -264,6 +367,8 @@ def _validar_dependencias_registros(registros: Sequence[_RegistroLinha]) -> list
     if total_em != 1:
         erros.append(ErroLayoutTXT(1, EM_TIPO, f"arquivo deve conter exatamente 1 linha EM, encontrado: {total_em}."))
 
+    tipos_topo = {TN_TIPO, TI_TIPO, EM_TIPO}
+
     for idx, registro in enumerate(registros):
         if registro.tipo != TN_TIPO or len(registro.conteudo) < TN_TAMANHO_TOTAL:
             continue
@@ -273,7 +378,7 @@ def _validar_dependencias_registros(registros: Sequence[_RegistroLinha]) -> list
 
         subsecoes = []
         cursor = idx + 1
-        while cursor < len(registros) and registros[cursor].tipo not in {TN_TIPO, EM_TIPO}:
+        while cursor < len(registros) and registros[cursor].tipo not in tipos_topo:
             subsecoes.append(registros[cursor].tipo)
             cursor += 1
 
@@ -294,16 +399,71 @@ def _validar_dependencias_registros(registros: Sequence[_RegistroLinha]) -> list
                 )
             )
 
+    for idx, registro in enumerate(registros):
+        if registro.tipo != TI_TIPO or len(registro.conteudo) < TI_TAMANHO_TOTAL:
+            continue
+
+        local_armazenamento = registro.conteudo[108]
+        subsecoes = []
+        cursor = idx + 1
+        while cursor < len(registros) and registros[cursor].tipo not in tipos_topo:
+            subsecoes.append(registros[cursor].tipo)
+            cursor += 1
+
+        if PI_TIPO not in subsecoes:
+            erros.append(
+                ErroLayoutTXT(
+                    registro.numero,
+                    registro.tipo,
+                    "Transporte Internacional exige uma subsecao PI antes do proximo registro principal.",
+                )
+            )
+        if local_armazenamento == "A" and LA_TIPO not in subsecoes:
+            erros.append(
+                ErroLayoutTXT(
+                    registro.numero,
+                    registro.tipo,
+                    "Local de Armazenamento = 'A' exige uma subsecao LA antes do proximo registro principal.",
+                )
+            )
+
+    for idx, registro in enumerate(registros):
+        if registro.tipo not in {PI_TIPO, LA_TIPO}:
+            continue
+        anterior_principal = None
+        cursor = idx - 1
+        while cursor >= 0:
+            if registros[cursor].tipo in tipos_topo:
+                anterior_principal = registros[cursor].tipo
+                break
+            cursor -= 1
+        if anterior_principal != TI_TIPO:
+            erros.append(
+                ErroLayoutTXT(
+                    registro.numero,
+                    registro.tipo,
+                    f"subsecao {registro.tipo} deve estar vinculada a uma linha TI anterior.",
+                )
+            )
+
     return erros
 
 
-def validar_txt_siproquim_arquivo(caminho_txt: str | Path) -> ResultadoValidacaoTXT:
+def validar_txt_siproquim_arquivo(
+    caminho_txt: str | Path,
+    documentos_destino_vazios_autorizados: set[str] | None = None,
+) -> ResultadoValidacaoTXT:
     caminho, linhas, erros_iniciais = _ler_linhas(caminho_txt)
     erros: List[ErroLayoutTXT] = list(erros_iniciais)
     registros: List[_RegistroLinha] = []
+    autorizados = {str(nf).strip() for nf in (documentos_destino_vazios_autorizados or set()) if str(nf).strip()}
 
     for numero_linha, linha in enumerate(linhas, start=1):
-        registro, erros_linha = _validar_linha_basica(numero_linha, linha)
+        registro, erros_linha = _validar_linha_basica(
+            numero_linha,
+            linha,
+            documentos_destino_vazios_autorizados=autorizados,
+        )
         registros.append(registro)
         erros.extend(erros_linha)
 
@@ -311,8 +471,14 @@ def validar_txt_siproquim_arquivo(caminho_txt: str | Path) -> ResultadoValidacao
     return ResultadoValidacaoTXT(caminho=caminho, total_linhas=len(linhas), erros=tuple(erros))
 
 
-def garantir_txt_valido(caminho_txt: str | Path) -> ResultadoValidacaoTXT:
-    resultado = validar_txt_siproquim_arquivo(caminho_txt)
+def garantir_txt_valido(
+    caminho_txt: str | Path,
+    documentos_destino_vazios_autorizados: set[str] | None = None,
+) -> ResultadoValidacaoTXT:
+    resultado = validar_txt_siproquim_arquivo(
+        caminho_txt,
+        documentos_destino_vazios_autorizados=documentos_destino_vazios_autorizados,
+    )
     if resultado.valido:
         return resultado
 
